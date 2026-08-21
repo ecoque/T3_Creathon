@@ -1,0 +1,62 @@
+{
+  "expo": {
+    "name": "TakeOff Companion",
+    "slug": "takeoff-companion-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "takeoffcompanion",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.t3vakfi.takeoffcompanion",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "PLACEHOLDER: Etkinlik alanında konumunuza göre stant/oturum önerileri sunmak için konumunuza ihtiyacımız var.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "PLACEHOLDER: Uygulama kapalıyken bile etkinlik boyunca yoğunluk haritası ve rota önerileri sunabilmek için arka planda konumunuzu kullanır. Ayarlar > Gizlilik'ten istediğiniz an kapatabilirsiniz.",
+        "UIBackgroundModes": ["location"]
+      }
+    },
+    "android": {
+      "package": "org.t3vakfi.takeoffcompanion",
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "PLACEHOLDER: Uygulama kapalıyken bile etkinlik boyunca yoğunluk haritası ve rota önerileri sunabilmek için arka planda konumunuzu kullanır."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "PLACEHOLDER: QR kod ile check-in yapabilmek için kameraya ihtiyacımız var."
+        }
+      ],
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "PLACEHOLDER: NFC ile hızlı bağlantı kurabilmek için NFC erişimine ihtiyacımız var."
+        }
+      ]
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "common": {
+    "continue": "Devam Et",
+    "cancel": "Vazgeç",
+    "save": "Kaydet",
+    "loading": "Yükleniyor..."
+  },
+  "onboarding": {
+    "roleTitle": "Rolünüzü seçin",
+    "roleGirisimci": "Girişimci",
+    "roleYatirimci": "Yatırımcı",
+    "roleKurum": "Kurum/Partner",
+    "roleZiyaretci": "Ziyaretçi"
+  },
+  "profile": {
+    "formTitle": "Profilinizi tamamlayın"
+  },
+  "home": {
+    "title": "Ajandam"
+  },
+  "matching": {
+    "title": "Keşfet",
+    "whyMatched": "Neden eşleştik"
+  },
+  "meetings": {
+    "title": "Toplantı Talepleri",
+    "incoming": "Gelen",
+    "outgoing": "Giden",
+    "accept": "Kabul Et",
+    "reject": "Reddet"
+  },
+  "map": {
+    "title": "Harita"
+  },
+  "locationPrivacy": {
+    "title": "Konum İzni ve Gizlilik",
+    "toggleLabel": "Etkinlik boyunca konumumu paylaş"
+  },
+  "admin": {
+    "title": "Admin Paneli"
+  }
+}

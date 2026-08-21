@@ -1,0 +1,42 @@
+{
+  "common": {
+    "continue": "Continue",
+    "cancel": "Cancel",
+    "save": "Save",
+    "loading": "Loading..."
+  },
+  "onboarding": {
+    "roleTitle": "Select your role",
+    "roleGirisimci": "Founder",
+    "roleYatirimci": "Investor",
+    "roleKurum": "Corporate/Partner",
+    "roleZiyaretci": "Visitor"
+  },
+  "profile": {
+    "formTitle": "Complete your profile"
+  },
+  "home": {
+    "title": "My Agenda"
+  },
+  "matching": {
+    "title": "Discover",
+    "whyMatched": "Why we matched"
+  },
+  "meetings": {
+    "title": "Meeting Requests",
+    "incoming": "Incoming",
+    "outgoing": "Outgoing",
+    "accept": "Accept",
+    "reject": "Reject"
+  },
+  "map": {
+    "title": "Map"
+  },
+  "locationPrivacy": {
+    "title": "Location Permission & Privacy",
+    "toggleLabel": "Share my location during the event"
+  },
+  "admin": {
+    "title": "Admin Panel"
+  }
+}
