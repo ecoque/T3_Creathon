@@ -2,6 +2,7 @@ import { Tabs } from 'expo-router';
 import { Calendar, Compass, Handshake, Map, User } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../../constants/theme';
 import { useMeetingRequests } from '../../lib/useMeetingRequests';
@@ -25,6 +26,7 @@ function MeetingsIcon({ color, size }: { color: string; size: number }) {
 
 export default function TabsLayout() {
   const { t } = useTranslation();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
@@ -33,7 +35,12 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
-        tabBarStyle: { borderTopColor: colors.border, height: 60, paddingBottom: 8, paddingTop: 6 },
+        tabBarStyle: {
+          borderTopColor: colors.border,
+          height: 60 + insets.bottom,
+          paddingBottom: Math.max(insets.bottom, 8),
+          paddingTop: 6,
+        },
       }}
     >
       <Tabs.Screen

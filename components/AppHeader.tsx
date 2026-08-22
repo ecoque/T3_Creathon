@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { Bell, SlidersHorizontal } from 'lucide-react-native';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { TakeOffLogo } from './TakeOffLogo';
 import { colors } from '../constants/theme';
@@ -36,43 +37,48 @@ export function AppHeader({
   const showFilter = (activeTab === 'kesfet' || activeTab === 'toplantilar') && onOpenFilter;
 
   return (
-    <View style={styles.header}>
-      <TakeOffLogo size="sm" />
+    <SafeAreaView edges={['top']} style={styles.safeArea}>
+      <View style={styles.header}>
+        <TakeOffLogo size="sm" />
 
-      <View style={styles.actions}>
-        {showFilter ? (
-          <Pressable style={styles.iconButton} onPress={onOpenFilter} hitSlop={8}>
-            <SlidersHorizontal size={20} color={colors.textMuted} />
+        <View style={styles.actions}>
+          {showFilter ? (
+            <Pressable style={styles.iconButton} onPress={onOpenFilter} hitSlop={8}>
+              <SlidersHorizontal size={20} color={colors.textMuted} />
+            </Pressable>
+          ) : null}
+
+          {onOpenNotifications ? (
+            <Pressable style={styles.iconButton} onPress={onOpenNotifications} hitSlop={8}>
+              <Bell size={20} color={colors.textMuted} />
+              {unreadNotifications > 0 ? <View style={styles.dot} /> : null}
+            </Pressable>
+          ) : null}
+
+          <Pressable
+            style={styles.avatarButton}
+            onPress={() => router.push('/(tabs)/profile')}
+            hitSlop={8}
+          >
+            {profile?.photo_url ? (
+              <Image source={{ uri: profile.photo_url }} style={styles.avatarImg} />
+            ) : (
+              <View style={styles.avatarFallback}>
+                <Text style={styles.avatarFallbackText}>{initialsFor(profile)}</Text>
+              </View>
+            )}
+            <View style={styles.onlineDot} />
           </Pressable>
-        ) : null}
-
-        {onOpenNotifications ? (
-          <Pressable style={styles.iconButton} onPress={onOpenNotifications} hitSlop={8}>
-            <Bell size={20} color={colors.textMuted} />
-            {unreadNotifications > 0 ? <View style={styles.dot} /> : null}
-          </Pressable>
-        ) : null}
-
-        <Pressable
-          style={styles.avatarButton}
-          onPress={() => router.push('/(tabs)/profile')}
-          hitSlop={8}
-        >
-          {profile?.photo_url ? (
-            <Image source={{ uri: profile.photo_url }} style={styles.avatarImg} />
-          ) : (
-            <View style={styles.avatarFallback}>
-              <Text style={styles.avatarFallbackText}>{initialsFor(profile)}</Text>
-            </View>
-          )}
-          <View style={styles.onlineDot} />
-        </Pressable>
+        </View>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    backgroundColor: colors.surface,
+  },
   header: {
     height: 64,
     paddingHorizontal: 16,
