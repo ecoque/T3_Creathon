@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -16,6 +17,7 @@ function splitCommaList(value: string): string[] {
 // Basit ilk versiyon: tasarım sonradan güncellenecek.
 export default function OnboardingProfileScreen() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const role = useOnboardingStore((state) => state.role);
   const [fullName, setFullName] = useState('');
   const [sector, setSector] = useState('');
@@ -44,23 +46,27 @@ export default function OnboardingProfileScreen() {
       return;
     }
 
-    const { error: insertError } = await supabase.from('profiles').insert({
-      user_id: user.id,
-      full_name: fullName,
-      role,
-      sector,
-      interests: splitCommaList(interests),
-      goals: splitCommaList(goals),
-      linkedin_url: linkedinUrl || null,
-    });
+    const { error: saveError } = await supabase.from('profiles').upsert(
+      {
+        user_id: user.id,
+        full_name: fullName,
+        role,
+        sector,
+        interests: splitCommaList(interests),
+        goals: splitCommaList(goals),
+        linkedin_url: linkedinUrl || null,
+      },
+      { onConflict: 'user_id' },
+    );
 
     setLoading(false);
 
-    if (insertError) {
-      setError(insertError.message);
+    if (saveError) {
+      setError(saveError.message);
       return;
     }
 
+    await queryClient.invalidateQueries({ queryKey: ['me', 'profile'] });
     router.replace('/(tabs)/home');
   }
 

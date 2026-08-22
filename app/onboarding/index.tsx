@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -18,6 +19,7 @@ const ROLE_LABEL_KEY: Record<ParticipantRole, string> = {
 // Basit ilk versiyon: tasarım sonradan güncellenecek.
 export default function OnboardingRoleScreen() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const setRole = useOnboardingStore((state) => state.setRole);
 
   function handleSelect(role: ParticipantRole) {
@@ -27,6 +29,7 @@ export default function OnboardingRoleScreen() {
 
   async function handleSignOut() {
     await supabase.auth.signOut();
+    queryClient.clear();
     router.replace('/auth');
   }
 

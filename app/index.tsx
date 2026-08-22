@@ -3,19 +3,41 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
 import { supabase } from '../lib/supabase';
+import { getProfileForUser } from '../lib/useCurrentProfile';
 
-// TODO: Onboarding tamamlanmış mı (profil var mı) kontrolü eklenip
-// buna göre doğrudan ana sayfaya yönlendirme yapılacak.
 export default function Index() {
-  const [hasSession, setHasSession] = useState<boolean | null>(null);
+  const [destination, setDestination] = useState<'/auth' | '/onboarding' | '/(tabs)/home' | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setHasSession(!!data.session);
+    let active = true;
+
+    async function resolveDestination() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!active) return;
+      if (!session) {
+        setDestination('/auth');
+        return;
+      }
+
+      const profile = await getProfileForUser(session.user.id);
+      if (active) {
+        setDestination(profile ? '/(tabs)/home' : '/onboarding');
+      }
+    }
+
+    resolveDestination().catch(() => {
+      if (active) setDestination('/auth');
     });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  if (hasSession === null) {
+  if (destination === null) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator />
@@ -23,5 +45,5 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={hasSession ? '/onboarding' : '/auth'} />;
+  return <Redirect href={destination} />;
 }
