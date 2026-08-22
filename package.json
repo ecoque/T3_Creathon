@@ -48,7 +48,7 @@
     "web": "expo start --web",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node --stack-size=8000 ./node_modules/typescript/bin/tsc --noEmit"
   },
   "private": true
 }
