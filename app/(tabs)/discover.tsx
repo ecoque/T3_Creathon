@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, Handshake, Search, Sparkles, SlidersHorizontal } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -13,15 +13,9 @@ import { WhyMatchModal } from '../../components/modals/WhyMatchModal';
 import { ROLES, ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
 import { computeMatchScore } from '../../features/matching/scoring';
-import { supabase } from '../../lib/supabase';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
+import { useOtherProfiles } from '../../lib/useOtherProfiles';
 import type { ParticipantRole, Profile } from '../../types';
-
-async function fetchOtherProfiles(myUserId: string): Promise<Profile[]> {
-  const { data, error } = await supabase.from('profiles').select('*').neq('user_id', myUserId);
-  if (error) throw error;
-  return (data ?? []) as Profile[];
-}
 
 function initialsFor(name?: string) {
   if (!name) return '?';
@@ -34,11 +28,7 @@ export default function DiscoverScreen() {
   const { data: meResult } = useCurrentProfile();
   const myProfile = meResult?.profile ?? null;
 
-  const { data: participants = [] } = useQuery({
-    queryKey: ['profiles', 'others', meResult?.userId],
-    queryFn: () => fetchOtherProfiles(meResult!.userId),
-    enabled: !!meResult?.userId,
-  });
+  const { data: participants = [] } = useOtherProfiles();
 
   const [search, setSearch] = useState('');
   const [quickRole, setQuickRole] = useState<ParticipantRole | 'all'>('all');

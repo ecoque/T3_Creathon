@@ -94,7 +94,19 @@
     "details": "Details",
     "addToAgenda": "Add to Agenda",
     "addedToAgenda": "Added to your agenda.",
-    "removedFromAgenda": "Removed from your agenda."
+    "removedFromAgenda": "Removed from your agenda.",
+    "itemsToday": "You have {{count}} items today.",
+    "viewDay": "Day",
+    "viewWeek": "Week",
+    "viewMonth": "Month",
+    "goToToday": "Today",
+    "meetingBadge": "Meeting",
+    "meetingWith": "Meeting with {{name}}",
+    "meetingNoParticipant": "Participant pending",
+    "goToMeetings": "View meeting",
+    "suggestionBadge": "Free-time Match",
+    "suggestionWith": "Chat opportunity with {{name}}",
+    "suggestionGap": "{{count}}min free"
   },
   "matching": {
     "title": "Discover",

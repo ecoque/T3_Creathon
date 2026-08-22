@@ -94,7 +94,19 @@
     "details": "Detaylar",
     "addToAgenda": "Ajandama Ekle",
     "addedToAgenda": "Ajandanıza eklendi.",
-    "removedFromAgenda": "Oturum ajandanızdan çıkarıldı."
+    "removedFromAgenda": "Oturum ajandanızdan çıkarıldı.",
+    "itemsToday": "Bugün için {{count}} etkinlik var.",
+    "viewDay": "Gün",
+    "viewWeek": "Hafta",
+    "viewMonth": "Ay",
+    "goToToday": "Bugün",
+    "meetingBadge": "Toplantı",
+    "meetingWith": "{{name}} ile toplantı",
+    "meetingNoParticipant": "Katılımcı bekleniyor",
+    "goToMeetings": "Toplantıyı Gör",
+    "suggestionBadge": "Boşluk Önerisi",
+    "suggestionWith": "{{name}} ile sohbet fırsatı",
+    "suggestionGap": "{{count}}dk boş"
   },
   "matching": {
     "title": "Keşfet",
