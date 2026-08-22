@@ -10,14 +10,7 @@
     "scheme": "takeoffcompanion",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "org.t3vakfi.takeoffcompanion",
-      "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "TakeOff, bulunduğunuz etkinlik alanına göre size yakın stant ve oturum önerileri sunmak için konumunuzu kullanır.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "TakeOff, etkinlik boyunca (uygulama kapalıyken de) yoğunluk haritası ve size özel rota önerileri sunabilmek için konumunuzu arka planda kullanır. Bu izni Ayarlar > Gizlilik ekranından istediğiniz an kapatabilirsiniz; kapattığınızda uygulamanın diğer tüm özellikleri (ajanda, eşleşme, toplantılar) sorunsuz çalışmaya devam eder. Konum verileriniz yalnızca etkinlik süresince tutulur ve etkinlik sonunda silinir.",
-        "UIBackgroundModes": [
-          "location"
-        ]
-      }
+      "bundleIdentifier": "org.t3vakfi.takeoffcompanion"
     },
     "android": {
       "package": "org.t3vakfi.takeoffcompanion",
@@ -34,11 +27,9 @@
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "android.permission.NFC"
+        "CAMERA",
+        "RECORD_AUDIO",
+        "NFC"
       ]
     },
     "web": {
@@ -49,7 +40,10 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "TakeOff, etkinlik boyunca (uygulama kapalıyken de) yoğunluk haritası ve size özel rota önerileri sunabilmek için konumunuzu arka planda kullanır. Bu izni istediğiniz an ayarlardan kapatabilirsiniz."
+          "locationWhenInUsePermission": "TakeOff, bulunduğunuz etkinlik alanına göre size yakın stant ve oturum önerileri sunmak için konumunuzu kullanır.",
+          "locationAlwaysAndWhenInUsePermission": "TakeOff, etkinlik boyunca (uygulama kapalıyken de) yoğunluk haritası ve size özel rota önerileri sunabilmek için konumunuzu arka planda kullanır. Bu izni Ayarlar > Gizlilik ekranından istediğiniz an kapatabilirsiniz; kapattığınızda uygulamanın diğer tüm özellikleri (ajanda, eşleşme, toplantılar) sorunsuz çalışmaya devam eder. Konum verileriniz yalnızca etkinlik süresince tutulur ve etkinlik sonunda silinir.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
         }
       ],
       [
