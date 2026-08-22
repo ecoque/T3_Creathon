@@ -5,7 +5,7 @@
     "owner": "kerimkahramaners-team",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/branding/takeoff-app-icon.png",
     "userInterfaceStyle": "light",
     "scheme": "takeoffcompanion",
     "ios": {
@@ -15,10 +15,8 @@
     "android": {
       "package": "org.t3vakfi.takeoffcompanion",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/branding/takeoff-app-icon.png"
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
@@ -33,7 +31,7 @@
       ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/branding/takeoff-app-icon.png"
     },
     "plugins": [
       "expo-router",
