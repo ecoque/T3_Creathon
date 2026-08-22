@@ -1,16 +1,20 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import { Lock, Mail } from 'lucide-react-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { TakeOffLogo } from '../../components/TakeOffLogo';
 import { colors } from '../../constants/theme';
 import { routeAfterAuth } from '../../lib/resolvePostAuthRoute';
 import { supabase } from '../../lib/supabase';
+import { getProfileForUser } from '../../lib/useCurrentProfile';
 
 export default function AuthScreen() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,15 +25,20 @@ export default function AuthScreen() {
     setLoading(true);
     setError(null);
     const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-    setLoading(false);
     if (signInError) {
+      setLoading(false);
       setError(signInError.message);
       return;
     }
-    if (data.user) {
-      await routeAfterAuth(data.user.id);
-    } else {
-      router.replace('/onboarding');
+
+    try {
+      queryClient.removeQueries({ queryKey: ['me', 'profile'] });
+      const profile = await getProfileForUser(data.user.id);
+      router.replace(profile ? '/(tabs)/home' : '/onboarding');
+    } catch (profileError) {
+      setError(profileError instanceof Error ? profileError.message : String(profileError));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -42,8 +51,9 @@ export default function AuthScreen() {
       setError(signUpError.message);
       return;
     }
-    if (data.session && data.user) {
-      await routeAfterAuth(data.user.id);
+    if (data.session) {
+      queryClient.removeQueries({ queryKey: ['me', 'profile'] });
+      router.replace('/onboarding');
       return;
     }
     setCheckEmail(true);
@@ -51,27 +61,35 @@ export default function AuthScreen() {
 
   if (checkEmail) {
     return (
-      <View style={styles.screen}>
-        <View style={styles.card}>
-          <View style={styles.accentBar} />
-          <View style={styles.cardBody}>
-            <TakeOffLogo variant="badge" size="lg" />
-            <Text style={styles.title}>{t('auth.checkEmailTitle')}</Text>
-            <Text style={styles.subtitle}>{t('auth.checkEmailBody')}</Text>
-            <Pressable style={styles.primaryBtn} onPress={() => setCheckEmail(false)}>
-              <Text style={styles.primaryBtnText}>{t('auth.signIn')}</Text>
-            </Pressable>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.screen}>
+          <View style={styles.card}>
+            <View style={styles.accentBar} />
+            <View style={styles.cardBody}>
+              <TakeOffLogo variant="badge" size="lg" />
+              <Text style={styles.title}>{t('auth.checkEmailTitle')}</Text>
+              <Text style={styles.subtitle}>{t('auth.checkEmailBody')}</Text>
+              <Pressable style={styles.primaryBtn} onPress={() => setCheckEmail(false)}>
+                <Text style={styles.primaryBtnText}>{t('auth.signIn')}</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
-      <View style={styles.card}>
-        <View style={styles.accentBar} />
-        <View style={styles.cardBody}>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        contentContainerStyle={styles.screen}
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode="interactive"
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.card}>
+          <View style={styles.accentBar} />
+          <View style={styles.cardBody}>
           <TakeOffLogo variant="badge" size="lg" />
           <Text style={styles.title}>{t('auth.title')}</Text>
           <Text style={styles.subtitle}>{t('auth.subtitle')}</Text>
@@ -127,13 +145,18 @@ export default function AuthScreen() {
               </View>
             )}
           </View>
+          </View>
         </View>
-      </View>
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
   screen: {
     flexGrow: 1,
     justifyContent: 'center',

@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import { Bell, ChevronRight, Edit3, Flag, LogOut, MapPin, Rocket } from 'lucide-react-native';
 import { useState } from 'react';
@@ -18,12 +19,14 @@ function initialsFor(name?: string) {
 
 export default function MyProfileScreen() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const { data: meResult } = useCurrentProfile();
   const profile = meResult?.profile;
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   async function handleLogout() {
     await supabase.auth.signOut();
+    queryClient.clear();
     router.replace('/auth');
   }
 

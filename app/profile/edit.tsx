@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Check } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
@@ -104,7 +105,7 @@ export default function EditProfileScreen() {
   }
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen}>
       <View style={styles.header}>
         <Pressable style={styles.backBtn} onPress={() => router.back()} hitSlop={8}>
           <ArrowLeft size={20} color={colors.text} />
@@ -113,7 +114,12 @@ export default function EditProfileScreen() {
         <View style={{ width: 36 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        automaticallyAdjustKeyboardInsets
+        keyboardDismissMode="interactive"
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.subtitle}>{t('editProfile.subtitle')}</Text>
 
         {error ? (
@@ -208,7 +214,7 @@ export default function EditProfileScreen() {
           <ArrowRight size={16} color={colors.white} />
         </Pressable>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 

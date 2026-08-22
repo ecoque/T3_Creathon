@@ -3,47 +3,41 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
 import { supabase } from '../lib/supabase';
+import { getProfileForUser } from '../lib/useCurrentProfile';
 
-type RouteStatus = 'loading' | 'no-session' | 'no-profile' | 'has-profile';
-
-// Oturum var mı VE profil tamamlanmış mı, ikisini birden kontrol edip
-// buna göre doğru yere yönlendiriyor (auth / onboarding / ana sayfa).
 export default function Index() {
-  const [status, setStatus] = useState<RouteStatus>('loading');
+  const [destination, setDestination] = useState<'/auth' | '/onboarding' | '/(tabs)/home' | null>(null);
 
   useEffect(() => {
-    let isMounted = true;
+    let active = true;
 
-    async function resolveInitialRoute() {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const session = sessionData.session;
+    async function resolveDestination() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
+      if (!active) return;
       if (!session) {
-        if (isMounted) setStatus('no-session');
+        setDestination('/auth');
         return;
       }
 
-      const { data: profile, error } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('user_id', session.user.id)
-        .maybeSingle();
-
-      if (!isMounted) return;
-
-      // Profil kontrolü beklenmedik şekilde hata verirse (ör. geçici ağ sorunu),
-      // güvenli tarafta kalıp onboarding'e yönlendiriyoruz; profili olan kullanıcı
-      // orada tekrar "zaten profilin var" durumuna düşmez çünkü submit artık upsert.
-      setStatus(!error && profile ? 'has-profile' : 'no-profile');
+      const profile = await getProfileForUser(session.user.id);
+      if (active) {
+        setDestination(profile ? '/(tabs)/home' : '/onboarding');
+      }
     }
 
-    resolveInitialRoute();
+    resolveDestination().catch(() => {
+      if (active) setDestination('/auth');
+    });
+
     return () => {
-      isMounted = false;
+      active = false;
     };
   }, []);
 
-  if (status === 'loading') {
+  if (destination === null) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <ActivityIndicator />
@@ -51,7 +45,5 @@ export default function Index() {
     );
   }
 
-  if (status === 'no-session') return <Redirect href="/auth" />;
-  if (status === 'no-profile') return <Redirect href="/onboarding" />;
-  return <Redirect href="/(tabs)/home" />;
+  return <Redirect href={destination} />;
 }

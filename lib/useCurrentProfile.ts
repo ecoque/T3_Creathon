@@ -3,6 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from './supabase';
 import type { Profile } from '../types';
 
+export async function getProfileForUser(userId: string): Promise<Profile | null> {
+  const { data, error } = await supabase.from('profiles').select('*').eq('user_id', userId).maybeSingle();
+  if (error) throw error;
+
+  return (data as Profile) ?? null;
+}
+
 async function fetchCurrentProfile(): Promise<{ userId: string; profile: Profile | null }> {
   const {
     data: { user },
@@ -12,10 +19,8 @@ async function fetchCurrentProfile(): Promise<{ userId: string; profile: Profile
     return { userId: '', profile: null };
   }
 
-  const { data, error } = await supabase.from('profiles').select('*').eq('user_id', user.id).maybeSingle();
-  if (error) throw error;
-
-  return { userId: user.id, profile: (data as Profile) ?? null };
+  const profile = await getProfileForUser(user.id);
+  return { userId: user.id, profile };
 }
 
 // Oturum açmış kullanıcının kendi profilini (varsa) getirir. Header, Profil ve
