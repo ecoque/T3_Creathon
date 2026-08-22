@@ -13,7 +13,8 @@
     "signUp": "Kayıt Ol",
     "error": "Bir hata oluştu, tekrar dene.",
     "checkEmailTitle": "E-postanı kontrol et",
-    "checkEmailBody": "Sana bir onay linki gönderdik. E-postandaki linke tıklayıp hesabını onayladıktan sonra buraya dönüp Giriş Yap'a basabilirsin."
+    "checkEmailBody": "Sana bir onay linki gönderdik. E-postandaki linke tıklayıp hesabını onayladıktan sonra buraya dönüp Giriş Yap'a basabilirsin.",
+    "signOut": "Çıkış Yap"
   },
   "onboarding": {
     "roleTitle": "Rolünüzü seçin",

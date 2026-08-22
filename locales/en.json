@@ -13,7 +13,8 @@
     "signUp": "Sign Up",
     "error": "Something went wrong, please try again.",
     "checkEmailTitle": "Check your email",
-    "checkEmailBody": "We sent you a confirmation link. After confirming your account, come back here and tap Sign In."
+    "checkEmailBody": "We sent you a confirmation link. After confirming your account, come back here and tap Sign In.",
+    "signOut": "Sign Out"
   },
   "onboarding": {
     "roleTitle": "Select your role",

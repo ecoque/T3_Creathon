@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useOnboardingStore } from '../../lib/onboardingStore';
+import { supabase } from '../../lib/supabase';
 import type { ParticipantRole } from '../../types';
 
 const ROLES: ParticipantRole[] = ['girisimci', 'yatirimci', 'kurum', 'ziyaretci'];
@@ -24,6 +25,11 @@ export default function OnboardingRoleScreen() {
     router.push('/onboarding/profile');
   }
 
+  async function handleSignOut() {
+    await supabase.auth.signOut();
+    router.replace('/auth');
+  }
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{t('onboarding.roleTitle')}</Text>
@@ -32,6 +38,9 @@ export default function OnboardingRoleScreen() {
           <Text style={styles.cardText}>{t(ROLE_LABEL_KEY[role])}</Text>
         </Pressable>
       ))}
+      <Pressable onPress={handleSignOut}>
+        <Text style={styles.signOut}>{t('auth.signOut')}</Text>
+      </Pressable>
     </View>
   );
 }
@@ -60,5 +69,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     textAlign: 'center',
+  },
+  signOut: {
+    marginTop: 16,
+    textAlign: 'center',
+    color: '#6b7280',
+    textDecorationLine: 'underline',
   },
 });
