@@ -1,17 +1,34 @@
-// T3 Vakfı marka renklerine göre uyarlanmıştır (logo: kırmızı-turuncu, mavi, sarı-turuncu üçgen).
+// TakeOff marka renk paleti (Google Stitch tasarımından alınmıştır).
 export const colors = {
-  primary: '#1B3764', // logo mavisinin koyu tonu — ana renk, header/nav
-  primaryLight: '#29ABE2', // logo mavisinin açık tonu — ikincil vurgu
-  secondary: '#C1272D', // logo kırmızısı — dikkat çekici aksiyonlar
-  accent: '#F7941D', // logo turuncusu — birincil CTA/buton rengi
-  accentLight: '#FBB03B', // logo sarısı — rozet/başarı vurgusu
-  background: '#ffffff',
-  surface: '#f4f5f7',
-  text: '#1a1a1a',
-  textMuted: '#6b7280',
-  border: '#e2e4e9',
-  success: '#2e7d32',
-  danger: '#c62828',
+  primary: '#c85000', // ana turuncu — CTA, aktif sekme, vurgular
+  primaryDark: '#a03e00',
+  primaryLight: '#ffdbcc',
+  primarySoft: '#ffeedb',
+  accent: '#E59E2D', // rozet/gradient ikincil rengi
+  secondary: '#4c6173', // soluk metin / ikincil ikon rengi
+  secondaryDark: '#34495b',
+  secondaryContainer: '#cce2f8',
+  background: '#f8f9fa',
+  surface: '#ffffff',
+  surfaceContainer: '#edeeef',
+  surfaceHigh: '#e7e8e9',
+  surfaceMuted: '#f3f4f5',
+  text: '#191c1d',
+  textMuted: '#4c6173',
+  textFaint: '#506578',
+  border: '#edeeef',
+  borderStrong: '#b3c9de',
+  success: '#137333',
+  successBg: '#e6f4ea',
+  successBorder: '#ceead6',
+  danger: '#ba1a1a',
+  dangerBg: '#ffdad6',
+  dangerBorder: '#ffb4ab',
+  white: '#ffffff',
+};
+
+export const gradient = {
+  primary: ['#c85000', '#E59E2D'] as const,
 };
 
 export const spacing = {
@@ -22,8 +39,17 @@ export const spacing = {
   xl: 32,
 };
 
+export const radius = {
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  full: 999,
+};
+
 export const typography = {
-  title: { fontSize: 22, fontWeight: '700' as const },
-  subtitle: { fontSize: 16, fontWeight: '600' as const },
-  body: { fontSize: 14, fontWeight: '400' as const },
+  title: { fontSize: 24, fontWeight: '700' as const, color: colors.text },
+  subtitle: { fontSize: 16, fontWeight: '600' as const, color: colors.text },
+  body: { fontSize: 14, fontWeight: '400' as const, color: colors.textMuted },
+  caption: { fontSize: 12, fontWeight: '500' as const, color: colors.textFaint },
 };

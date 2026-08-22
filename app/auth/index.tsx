@@ -1,11 +1,13 @@
 import { router } from 'expo-router';
+import { Lock, Mail } from 'lucide-react-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { TakeOffLogo } from '../../components/TakeOffLogo';
+import { colors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 
-// Basit ilk versiyon: tasarım sonradan güncellenecek.
 export default function AuthScreen() {
   const { t } = useTranslation();
   const [email, setEmail] = useState('');
@@ -36,110 +38,162 @@ export default function AuthScreen() {
       return;
     }
     if (data.session) {
-      // E-posta doğrulaması kapalıysa oturum direkt açılır.
       router.replace('/onboarding');
       return;
     }
-    // E-posta doğrulaması açık: onay linkine tıklanana kadar oturum açılmaz.
     setCheckEmail(true);
   }
 
   if (checkEmail) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>{t('auth.checkEmailTitle')}</Text>
-        <Text style={styles.info}>{t('auth.checkEmailBody')}</Text>
-        <Pressable style={styles.button} onPress={() => setCheckEmail(false)}>
-          <Text style={styles.buttonText}>{t('auth.signIn')}</Text>
-        </Pressable>
+      <View style={styles.screen}>
+        <View style={styles.card}>
+          <View style={styles.accentBar} />
+          <View style={styles.cardBody}>
+            <TakeOffLogo variant="badge" size="lg" />
+            <Text style={styles.title}>{t('auth.checkEmailTitle')}</Text>
+            <Text style={styles.subtitle}>{t('auth.checkEmailBody')}</Text>
+            <Pressable style={styles.primaryBtn} onPress={() => setCheckEmail(false)}>
+              <Text style={styles.primaryBtnText}>{t('auth.signIn')}</Text>
+            </Pressable>
+          </View>
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>{t('auth.title')}</Text>
-      <TextInput
-        style={styles.input}
-        placeholder={t('auth.email')}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        value={email}
-        onChangeText={setEmail}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder={t('auth.password')}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      {loading ? (
-        <ActivityIndicator />
-      ) : (
-        <View style={styles.buttonRow}>
-          <Pressable style={styles.button} onPress={handleSignIn}>
-            <Text style={styles.buttonText}>{t('auth.signIn')}</Text>
-          </Pressable>
-          <Pressable style={[styles.button, styles.buttonSecondary]} onPress={handleSignUp}>
-            <Text style={styles.buttonText}>{t('auth.signUp')}</Text>
-          </Pressable>
+    <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
+      <View style={styles.card}>
+        <View style={styles.accentBar} />
+        <View style={styles.cardBody}>
+          <TakeOffLogo variant="badge" size="lg" />
+          <Text style={styles.title}>{t('auth.title')}</Text>
+          <Text style={styles.subtitle}>{t('auth.subtitle')}</Text>
+
+          {error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.form}>
+            <View style={styles.field}>
+              <Text style={styles.label}>{t('auth.email')}</Text>
+              <View style={styles.inputWrap}>
+                <Mail size={16} color={colors.textFaint} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  placeholder={t('auth.emailPlaceholder')}
+                  placeholderTextColor={colors.textFaint}
+                />
+              </View>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>{t('auth.password')}</Text>
+              <View style={styles.inputWrap}>
+                <Lock size={16} color={colors.textFaint} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  placeholder={t('auth.passwordPlaceholder')}
+                  placeholderTextColor={colors.textFaint}
+                />
+              </View>
+            </View>
+
+            {loading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginTop: 8 }} />
+            ) : (
+              <View style={styles.buttonRow}>
+                <Pressable style={styles.secondaryBtn} onPress={handleSignUp}>
+                  <Text style={styles.secondaryBtnText}>{t('auth.signUp')}</Text>
+                </Pressable>
+                <Pressable style={styles.primaryBtnInline} onPress={handleSignIn}>
+                  <Text style={styles.primaryBtnText}>{t('auth.signIn')}</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
         </View>
-      )}
-    </View>
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  screen: {
+    flexGrow: 1,
     justifyContent: 'center',
-    padding: 24,
-    gap: 12,
+    padding: 20,
+    backgroundColor: colors.background,
   },
-  title: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  input: {
+  card: {
+    borderRadius: 24,
+    backgroundColor: colors.white,
     borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
+    borderColor: colors.border,
+    overflow: 'hidden',
   },
-  buttonRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 8,
+  accentBar: { height: 6, backgroundColor: colors.primary },
+  cardBody: { padding: 28, alignItems: 'center', gap: 6 },
+  title: { fontSize: 22, fontWeight: '800', color: colors.text, textAlign: 'center', marginTop: 8 },
+  subtitle: { fontSize: 13, color: colors.textMuted, textAlign: 'center', marginBottom: 8 },
+  errorBox: {
+    width: '100%',
+    backgroundColor: colors.dangerBg,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+    borderRadius: 12,
+    padding: 12,
   },
-  button: {
+  errorText: { color: colors.danger, fontSize: 12, fontWeight: '700' },
+  form: { width: '100%', gap: 14, marginTop: 8 },
+  field: { gap: 6 },
+  label: { fontSize: 12, fontWeight: '800', color: colors.text },
+  inputWrap: { position: 'relative', justifyContent: 'center' },
+  inputIcon: { position: 'absolute', left: 14, zIndex: 1 },
+  input: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingLeft: 40,
+    paddingRight: 14,
+    fontSize: 14,
+    color: colors.text,
+  },
+  buttonRow: { flexDirection: 'row', gap: 10, marginTop: 6 },
+  secondaryBtn: {
     flex: 1,
-    backgroundColor: '#1B3764',
-    borderRadius: 8,
-    paddingVertical: 14,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceMuted,
     alignItems: 'center',
   },
-  buttonSecondary: {
-    backgroundColor: '#F7941D',
+  secondaryBtnText: { fontSize: 13, fontWeight: '800', color: colors.text },
+  primaryBtnInline: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
   },
-  buttonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 15,
+  primaryBtn: {
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    marginTop: 12,
   },
-  error: {
-    color: '#c62828',
-    textAlign: 'center',
-  },
-  info: {
-    fontSize: 15,
-    textAlign: 'center',
-    color: '#444',
-    marginBottom: 8,
-  },
+  primaryBtnText: { fontSize: 13, fontWeight: '800', color: colors.white },
 });

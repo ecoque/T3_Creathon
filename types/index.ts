@@ -81,3 +81,19 @@ export interface LocationPing {
   accuracy: number;
   timestamp: string;
 }
+
+// Aşağıdaki tipler sadece harita görselleştirmesi için kullanılan, henüz backend
+// şemasına (zones/stands) bağlanmamış statik UI verisidir (bkz. constants/venuePoints.ts).
+export type VenueDensity = 'Sakin' | 'Normal' | 'Yoğun';
+
+export interface VenuePoint {
+  id: string;
+  name: string;
+  type: 'stage' | 'networking' | 'service' | 'food';
+  floor: 1 | 2;
+  x: number; // 0-100 arası yüzde konum
+  y: number; // 0-100 arası yüzde konum
+  density: VenueDensity;
+  description: string;
+  currentEvent?: string;
+}
