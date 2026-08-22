@@ -1,7 +1,10 @@
-// Geçici tema değerleri — gerçek marka renkleri/tipografi tasarım ekibiyle netleşince güncellenecek.
+// T3 Vakfı marka renklerine göre uyarlanmıştır (logo: kırmızı-turuncu, mavi, sarı-turuncu üçgen).
 export const colors = {
-  primary: '#1c2b56', // koyu lacivert
-  accent: '#f5821f', // turuncu vurgu
+  primary: '#1B3764', // logo mavisinin koyu tonu — ana renk, header/nav
+  primaryLight: '#29ABE2', // logo mavisinin açık tonu — ikincil vurgu
+  secondary: '#C1272D', // logo kırmızısı — dikkat çekici aksiyonlar
+  accent: '#F7941D', // logo turuncusu — birincil CTA/buton rengi
+  accentLight: '#FBB03B', // logo sarısı — rozet/başarı vurgusu
   background: '#ffffff',
   surface: '#f4f5f7',
   text: '#1a1a1a',

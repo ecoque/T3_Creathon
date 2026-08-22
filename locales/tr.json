@@ -5,6 +5,16 @@
     "save": "Kaydet",
     "loading": "Yükleniyor..."
   },
+  "auth": {
+    "title": "Giriş Yap / Kayıt Ol",
+    "email": "E-posta",
+    "password": "Şifre",
+    "signIn": "Giriş Yap",
+    "signUp": "Kayıt Ol",
+    "error": "Bir hata oluştu, tekrar dene.",
+    "checkEmailTitle": "E-postanı kontrol et",
+    "checkEmailBody": "Sana bir onay linki gönderdik. E-postandaki linke tıklayıp hesabını onayladıktan sonra buraya dönüp Giriş Yap'a basabilirsin."
+  },
   "onboarding": {
     "roleTitle": "Rolünüzü seçin",
     "roleGirisimci": "Girişimci",
@@ -13,7 +23,13 @@
     "roleZiyaretci": "Ziyaretçi"
   },
   "profile": {
-    "formTitle": "Profilinizi tamamlayın"
+    "formTitle": "Profilinizi tamamlayın",
+    "fullName": "Ad Soyad",
+    "sector": "Sektör",
+    "interests": "İlgi alanları (virgülle ayırın)",
+    "goals": "Hedefler (virgülle ayırın)",
+    "linkedin": "LinkedIn URL (opsiyonel)",
+    "submit": "Kaydet ve Devam Et"
   },
   "home": {
     "title": "Ajandam"

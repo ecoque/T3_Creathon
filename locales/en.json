@@ -5,6 +5,16 @@
     "save": "Save",
     "loading": "Loading..."
   },
+  "auth": {
+    "title": "Sign In / Sign Up",
+    "email": "Email",
+    "password": "Password",
+    "signIn": "Sign In",
+    "signUp": "Sign Up",
+    "error": "Something went wrong, please try again.",
+    "checkEmailTitle": "Check your email",
+    "checkEmailBody": "We sent you a confirmation link. After confirming your account, come back here and tap Sign In."
+  },
   "onboarding": {
     "roleTitle": "Select your role",
     "roleGirisimci": "Founder",
@@ -13,7 +23,13 @@
     "roleZiyaretci": "Visitor"
   },
   "profile": {
-    "formTitle": "Complete your profile"
+    "formTitle": "Complete your profile",
+    "fullName": "Full Name",
+    "sector": "Sector",
+    "interests": "Interests (comma separated)",
+    "goals": "Goals (comma separated)",
+    "linkedin": "LinkedIn URL (optional)",
+    "submit": "Save and Continue"
   },
   "home": {
     "title": "My Agenda"

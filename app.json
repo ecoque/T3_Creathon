@@ -12,8 +12,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "org.t3vakfi.takeoffcompanion",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "PLACEHOLDER: Etkinlik alanında konumunuza göre stant/oturum önerileri sunmak için konumunuza ihtiyacımız var.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "PLACEHOLDER: Uygulama kapalıyken bile etkinlik boyunca yoğunluk haritası ve rota önerileri sunabilmek için arka planda konumunuzu kullanır. Ayarlar > Gizlilik'ten istediğiniz an kapatabilirsiniz.",
+        "NSLocationWhenInUseUsageDescription": "TakeOff, bulunduğunuz etkinlik alanına göre size yakın stant ve oturum önerileri sunmak için konumunuzu kullanır.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "TakeOff, etkinlik boyunca (uygulama kapalıyken de) yoğunluk haritası ve size özel rota önerileri sunabilmek için konumunuzu arka planda kullanır. Bu izni Ayarlar > Gizlilik ekranından istediğiniz an kapatabilirsiniz; kapattığınızda uygulamanın diğer tüm özellikleri (ajanda, eşleşme, toplantılar) sorunsuz çalışmaya devam eder. Konum verileriniz yalnızca etkinlik süresince tutulur ve etkinlik sonunda silinir.",
         "UIBackgroundModes": [
           "location"
         ]
@@ -49,19 +49,19 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "PLACEHOLDER: Uygulama kapalıyken bile etkinlik boyunca yoğunluk haritası ve rota önerileri sunabilmek için arka planda konumunuzu kullanır."
+          "locationAlwaysAndWhenInUsePermission": "TakeOff, etkinlik boyunca (uygulama kapalıyken de) yoğunluk haritası ve size özel rota önerileri sunabilmek için konumunuzu arka planda kullanır. Bu izni istediğiniz an ayarlardan kapatabilirsiniz."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "PLACEHOLDER: QR kod ile check-in yapabilmek için kameraya ihtiyacımız var."
+          "cameraPermission": "TakeOff, oturum ve stant check-in'lerini QR kod ile yapabilmeniz için kameranıza ihtiyaç duyar."
         }
       ],
       [
         "react-native-nfc-manager",
         {
-          "nfcPermission": "PLACEHOLDER: NFC ile hızlı bağlantı kurabilmek için NFC erişimine ihtiyacımız var."
+          "nfcPermission": "TakeOff, etiket okutarak diğer katılımcılarla hızlıca bağlantı kurabilmeniz için NFC erişimine ihtiyaç duyar."
         }
       ],
       "expo-localization"
