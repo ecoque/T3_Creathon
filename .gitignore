@@ -40,3 +40,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Local Expo server logs
+expo-start.log
+expo-start.err
