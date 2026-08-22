@@ -6,6 +6,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 
 import { TakeOffLogo } from '../../components/TakeOffLogo';
 import { colors } from '../../constants/theme';
+import { routeAfterAuth } from '../../lib/resolvePostAuthRoute';
 import { supabase } from '../../lib/supabase';
 
 export default function AuthScreen() {
@@ -19,13 +20,17 @@ export default function AuthScreen() {
   async function handleSignIn() {
     setLoading(true);
     setError(null);
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (signInError) {
       setError(signInError.message);
       return;
     }
-    router.replace('/onboarding');
+    if (data.user) {
+      await routeAfterAuth(data.user.id);
+    } else {
+      router.replace('/onboarding');
+    }
   }
 
   async function handleSignUp() {
@@ -37,8 +42,8 @@ export default function AuthScreen() {
       setError(signUpError.message);
       return;
     }
-    if (data.session) {
-      router.replace('/onboarding');
+    if (data.session && data.user) {
+      await routeAfterAuth(data.user.id);
       return;
     }
     setCheckEmail(true);

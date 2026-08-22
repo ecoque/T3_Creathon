@@ -44,15 +44,23 @@ export default function OnboardingProfileScreen() {
       return;
     }
 
-    const { error: insertError } = await supabase.from('profiles').insert({
-      user_id: user.id,
-      full_name: fullName,
-      role,
-      sector,
-      interests: splitCommaList(interests),
-      goals: splitCommaList(goals),
-      linkedin_url: linkedinUrl || null,
-    });
+    // insert değil upsert: aynı kullanıcı (ör. daha önce profili olan biri
+    // buraya yanlışlıkla tekrar düşerse) "duplicate key" hatası almadan,
+    // var olan profilini güncellemiş olur.
+    const { error: insertError } = await supabase
+      .from('profiles')
+      .upsert(
+        {
+          user_id: user.id,
+          full_name: fullName,
+          role,
+          sector,
+          interests: splitCommaList(interests),
+          goals: splitCommaList(goals),
+          linkedin_url: linkedinUrl || null,
+        },
+        { onConflict: 'user_id' },
+      );
 
     setLoading(false);
 

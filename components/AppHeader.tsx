@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { Bell, SlidersHorizontal } from 'lucide-react-native';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TakeOffLogo } from './TakeOffLogo';
 import { colors } from '../constants/theme';
@@ -33,10 +34,11 @@ export function AppHeader({
   onOpenNotifications,
   unreadNotifications = 0,
 }: AppHeaderProps) {
+  const insets = useSafeAreaInsets();
   const showFilter = (activeTab === 'kesfet' || activeTab === 'toplantilar') && onOpenFilter;
 
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
       <TakeOffLogo size="sm" />
 
       <View style={styles.actions}>
@@ -74,7 +76,7 @@ export function AppHeader({
 
 const styles = StyleSheet.create({
   header: {
-    height: 64,
+    paddingBottom: 12,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
