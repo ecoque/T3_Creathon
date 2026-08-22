@@ -3,11 +3,20 @@ import { router } from 'expo-router';
 import { Lock, Mail } from 'lucide-react-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { TakeOffLogo } from '../../components/TakeOffLogo';
 import { colors } from '../../constants/theme';
+import { isAdminUser } from '../../lib/adminAccess';
 import { supabase } from '../../lib/supabase';
 import { getProfileForUser } from '../../lib/useCurrentProfile';
 
@@ -23,7 +32,10 @@ export default function AuthScreen() {
   async function handleSignIn() {
     setLoading(true);
     setError(null);
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
     if (signInError) {
       setLoading(false);
       setError(signInError.message);
@@ -32,6 +44,11 @@ export default function AuthScreen() {
 
     try {
       queryClient.removeQueries({ queryKey: ['me', 'profile'] });
+      const admin = await isAdminUser(data.user.id);
+      if (admin) {
+        router.replace('/admin');
+        return;
+      }
       const profile = await getProfileForUser(data.user.id);
       router.replace(profile ? '/(tabs)/home' : '/onboarding');
     } catch (profileError) {
@@ -89,61 +106,61 @@ export default function AuthScreen() {
         <View style={styles.card}>
           <View style={styles.accentBar} />
           <View style={styles.cardBody}>
-          <TakeOffLogo variant="badge" size="lg" />
-          <Text style={styles.title}>{t('auth.title')}</Text>
-          <Text style={styles.subtitle}>{t('auth.subtitle')}</Text>
+            <TakeOffLogo variant="badge" size="lg" />
+            <Text style={styles.title}>{t('auth.title')}</Text>
+            <Text style={styles.subtitle}>{t('auth.subtitle')}</Text>
 
-          {error ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          ) : null}
-
-          <View style={styles.form}>
-            <View style={styles.field}>
-              <Text style={styles.label}>{t('auth.email')}</Text>
-              <View style={styles.inputWrap}>
-                <Mail size={16} color={colors.textFaint} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  placeholder={t('auth.emailPlaceholder')}
-                  placeholderTextColor={colors.textFaint}
-                />
+            {error ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{error}</Text>
               </View>
-            </View>
+            ) : null}
 
-            <View style={styles.field}>
-              <Text style={styles.label}>{t('auth.password')}</Text>
-              <View style={styles.inputWrap}>
-                <Lock size={16} color={colors.textFaint} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                  placeholder={t('auth.passwordPlaceholder')}
-                  placeholderTextColor={colors.textFaint}
-                />
+            <View style={styles.form}>
+              <View style={styles.field}>
+                <Text style={styles.label}>{t('auth.email')}</Text>
+                <View style={styles.inputWrap}>
+                  <Mail size={16} color={colors.textFaint} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    value={email}
+                    onChangeText={setEmail}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    placeholder={t('auth.emailPlaceholder')}
+                    placeholderTextColor={colors.textFaint}
+                  />
+                </View>
               </View>
-            </View>
 
-            {loading ? (
-              <ActivityIndicator color={colors.primary} style={{ marginTop: 8 }} />
-            ) : (
-              <View style={styles.buttonRow}>
-                <Pressable style={styles.secondaryBtn} onPress={handleSignUp}>
-                  <Text style={styles.secondaryBtnText}>{t('auth.signUp')}</Text>
-                </Pressable>
-                <Pressable style={styles.primaryBtnInline} onPress={handleSignIn}>
-                  <Text style={styles.primaryBtnText}>{t('auth.signIn')}</Text>
-                </Pressable>
+              <View style={styles.field}>
+                <Text style={styles.label}>{t('auth.password')}</Text>
+                <View style={styles.inputWrap}>
+                  <Lock size={16} color={colors.textFaint} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry
+                    placeholder={t('auth.passwordPlaceholder')}
+                    placeholderTextColor={colors.textFaint}
+                  />
+                </View>
               </View>
-            )}
-          </View>
+
+              {loading ? (
+                <ActivityIndicator color={colors.primary} style={{ marginTop: 8 }} />
+              ) : (
+                <View style={styles.buttonRow}>
+                  <Pressable style={styles.secondaryBtn} onPress={handleSignUp}>
+                    <Text style={styles.secondaryBtnText}>{t('auth.signUp')}</Text>
+                  </Pressable>
+                  <Pressable style={styles.primaryBtnInline} onPress={handleSignIn}>
+                    <Text style={styles.primaryBtnText}>{t('auth.signIn')}</Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
           </View>
         </View>
       </ScrollView>

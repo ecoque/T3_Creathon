@@ -4,9 +4,12 @@ import { ActivityIndicator, View } from 'react-native';
 
 import { supabase } from '../lib/supabase';
 import { getProfileForUser } from '../lib/useCurrentProfile';
+import { isAdminUser } from '../lib/adminAccess';
 
 export default function Index() {
-  const [destination, setDestination] = useState<'/auth' | '/onboarding' | '/(tabs)/home' | null>(null);
+  const [destination, setDestination] = useState<
+    '/auth' | '/onboarding' | '/(tabs)/home' | '/admin' | null
+  >(null);
 
   useEffect(() => {
     let active = true;
@@ -19,6 +22,12 @@ export default function Index() {
       if (!active) return;
       if (!session) {
         setDestination('/auth');
+        return;
+      }
+
+      const admin = await isAdminUser(session.user.id);
+      if (admin) {
+        setDestination('/admin');
         return;
       }
 
