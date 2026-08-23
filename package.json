@@ -48,7 +48,8 @@
     "web": "expo start --web",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "typecheck": "node --stack-size=8000 ./node_modules/typescript/bin/tsc --noEmit"
+    "typecheck": "node --stack-size=8000 ./node_modules/typescript/bin/tsc --noEmit",
+    "test:admin-db": "node scripts/verify-admin-db.mjs"
   },
   "private": true
 }
