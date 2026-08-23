@@ -3,7 +3,9 @@ import { Save, X } from 'lucide-react-native';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,12 +13,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { ADMIN_DATA_QUERY_KEY } from '../../lib/useAdminData';
 import type { Session, Stand, Zone } from '../../types';
+
+const EDITOR_HEADER_HEIGHT = 62;
+const EDITOR_CONTENT_BOTTOM_PADDING = 44;
 
 type EditorBaseProps = {
   visible: boolean;
@@ -35,19 +40,42 @@ function EditorModal({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const insets = useSafeAreaInsets();
+  const safeTop = Math.max(insets.top, 12);
+
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.screen}>
-        <View style={styles.header}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      statusBarTranslucent
+      navigationBarTranslucent={Platform.OS === 'android'}
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View
+          style={[
+            styles.header,
+            { paddingTop: safeTop, minHeight: EDITOR_HEADER_HEIGHT + safeTop },
+          ]}
+        >
           <Text style={styles.headerTitle}>{title}</Text>
           <Pressable style={styles.iconButton} onPress={onClose}>
             <X size={20} color={colors.text} />
           </Pressable>
         </View>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: EDITOR_CONTENT_BOTTOM_PADDING + Math.max(insets.bottom, 8) },
+          ]}
+          keyboardShouldPersistTaps="handled"
+        >
           {children}
         </ScrollView>
-      </SafeAreaView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -347,7 +375,7 @@ export function AdminStandEditor({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   header: {
-    height: 62,
+    minHeight: EDITOR_HEADER_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -370,7 +398,7 @@ const styles = StyleSheet.create({
     maxWidth: 720,
     alignSelf: 'center',
     padding: 16,
-    paddingBottom: 44,
+    paddingBottom: EDITOR_CONTENT_BOTTOM_PADDING,
     gap: 14,
   },
   field: { gap: 6 },

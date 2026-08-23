@@ -50,6 +50,11 @@ export default function AuthScreen() {
         return;
       }
       const profile = await getProfileForUser(data.user.id);
+      if (profile?.status === 'passive') {
+        await supabase.auth.signOut();
+        setError('Bu hesap etkinlik yöneticisi tarafından pasife alınmış.');
+        return;
+      }
       router.replace(profile ? '/(tabs)/home' : '/onboarding');
     } catch (profileError) {
       setError(profileError instanceof Error ? profileError.message : String(profileError));

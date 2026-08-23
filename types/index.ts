@@ -21,6 +21,7 @@ export interface Profile {
   sector: string;
   interests: string[];
   goals: string[];
+  status?: 'active' | 'passive';
 }
 
 export interface Session {

@@ -1,5 +1,5 @@
-import { AdminPanel } from '../../components/admin/AdminPanel';
+import { AdminWorkspace } from '../../components/admin/AdminWorkspace';
 
 export default function AdminScreen() {
-  return <AdminPanel />;
+  return <AdminWorkspace />;
 }

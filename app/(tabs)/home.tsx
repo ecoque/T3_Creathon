@@ -15,7 +15,11 @@ import { supabase } from '../../lib/supabase';
 import type { Session } from '../../types';
 
 async function fetchSessions(): Promise<Session[]> {
-  const { data, error } = await supabase.from('sessions').select('*').order('start_time', { ascending: true });
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('*')
+    .in('status', ['published', 'live', 'delayed', 'completed'])
+    .order('start_time', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Session[];
 }

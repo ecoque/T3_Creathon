@@ -33,7 +33,12 @@ export default function Index() {
 
       const profile = await getProfileForUser(session.user.id);
       if (active) {
-        setDestination(profile ? '/(tabs)/home' : '/onboarding');
+        if (profile?.status === 'passive') {
+          await supabase.auth.signOut();
+          setDestination('/auth');
+        } else {
+          setDestination(profile ? '/(tabs)/home' : '/onboarding');
+        }
       }
     }
 
