@@ -64,11 +64,16 @@ export default function MyProfileScreen() {
               <View style={styles.roleTag}>
                 <Text style={styles.roleTagText}>{t(ROLE_LABEL_KEY[profile.role])}</Text>
               </View>
+              {profile.title || profile.company ? (
+                <View style={styles.identityMeta}>
+                  <Text style={styles.identityMetaText}>{[profile.title, profile.company].filter(Boolean).join(' · ')}</Text>
+                </View>
+              ) : null}
             </View>
 
             {profile.sector ? (
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>{t('profile.sectorTitle')}</Text>
+                <Text style={styles.sectionTitle}>{t(profile.role === 'yatirimci' ? 'investor.primaryFocus' : 'profile.sectorTitle')}</Text>
                 <View style={styles.chipRow}>
                   <View style={styles.neutralChip}>
                     <Text style={styles.neutralChipText}>{profile.sector}</Text>
@@ -77,8 +82,28 @@ export default function MyProfileScreen() {
               </View>
             ) : null}
 
+            {profile.role === 'yatirimci' && (profile.investment_focuses?.length ?? 0) > 0 ? (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>{t('investor.secondaryFocuses')}</Text>
+                <View style={styles.chipRow}>
+                  {profile.investment_focuses?.map((focus) => (
+                    <View key={focus} style={styles.interestChip}>
+                      <Text style={styles.interestChipText}>{focus}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+            {profile.role === 'yatirimci' && profile.investment_thesis?.trim() ? (
+              <View style={styles.thesisCard}>
+                <Text style={styles.sectionTitle}>{t('investor.thesis')}</Text>
+                <Text style={styles.thesisText}>{profile.investment_thesis.trim()}</Text>
+              </View>
+            ) : null}
+
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>{t('profile.interestsTitle')}</Text>
+              <Text style={styles.sectionTitle}>{t(profile.role === 'yatirimci' ? 'investor.preferencesLabel' : 'profile.interestsTitle')}</Text>
               <View style={styles.chipRow}>
                 {profile.interests.map((interest, i) => (
                   <View key={i} style={styles.interestChip}>
@@ -198,8 +223,12 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   roleTagText: { fontSize: 12, fontWeight: '700', color: colors.secondaryDark },
+  identityMeta: { alignItems: 'center', marginTop: 10 },
+  identityMetaText: { color: colors.textMuted, fontSize: 13, fontWeight: '700', textAlign: 'center' },
   section: { gap: 8 },
   sectionTitle: { fontSize: 15, fontWeight: '800', color: colors.text },
+  thesisCard: { gap: 8, backgroundColor: colors.white, borderRadius: 16, borderWidth: 1, borderColor: colors.border, padding: 16 },
+  thesisText: { color: colors.textMuted, fontSize: 13, lineHeight: 20 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   neutralChip: {
     backgroundColor: colors.surfaceMuted,

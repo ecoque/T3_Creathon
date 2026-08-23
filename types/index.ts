@@ -17,6 +17,10 @@ export interface Profile {
   full_name: string;
   photo_url?: string;
   linkedin_url?: string;
+  title?: string;
+  company?: string;
+  investment_thesis?: string | null;
+  investment_focuses?: string[];
   role: ParticipantRole;
   sector: string;
   interests: string[];
