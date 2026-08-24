@@ -35,6 +35,8 @@ export interface Session {
   start_time: string;
   end_time: string;
   location?: string;
+  category?: string;
+  tags?: string[];
 }
 
 export interface MeetingRequest {
@@ -44,6 +46,15 @@ export interface MeetingRequest {
   status: MeetingStatus;
   proposed_time?: string;
   created_at: string;
+}
+
+export interface MeetingNote {
+  id: string;
+  meeting_request_id: string;
+  owner_user_id: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Badge {

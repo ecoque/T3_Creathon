@@ -101,6 +101,47 @@ function computeInvestorPriorityScore(investor: Profile, candidate: Profile): Ma
   return { score: Math.min(100, score), reasons: [], reasonDetails };
 }
 
+function computeEntrepreneurPriorityScore(entrepreneur: Profile, candidate: Profile): MatchResult {
+  if (!['girisimci', 'kurum', 'yatirimci'].includes(candidate.role)) return { score: 0, reasons: [] };
+
+  const rolePoints: Record<'girisimci' | 'kurum' | 'yatirimci', number> = {
+    yatirimci: 26,
+    kurum: 24,
+    girisimci: 14,
+  };
+  const roleReason: Record<'girisimci' | 'kurum' | 'yatirimci', string> = {
+    yatirimci: 'entrepreneur.reasonInvestor',
+    kurum: 'entrepreneur.reasonOrganization',
+    girisimci: 'entrepreneur.reasonFounder',
+  };
+  const targetRole = candidate.role as 'girisimci' | 'kurum' | 'yatirimci';
+  let score = rolePoints[targetRole];
+  const reasonDetails: NonNullable<MatchResult['reasonDetails']> = [{ key: roleReason[targetRole] }];
+
+  if (
+    entrepreneur.sector
+    && candidate.sector
+    && entrepreneur.sector.toLocaleLowerCase('tr-TR') === candidate.sector.toLocaleLowerCase('tr-TR')
+  ) {
+    score += 36;
+    reasonDetails.push({ key: 'entrepreneur.reasonSector', params: { sector: entrepreneur.sector } });
+  }
+
+  const commonInterests = sharedItems(entrepreneur.interests ?? [], candidate.interests ?? []).slice(0, 3);
+  if (commonInterests.length > 0) {
+    score += commonInterests.length * 8;
+    reasonDetails.push({ key: 'entrepreneur.reasonInterest', params: { items: commonInterests.join(', ') } });
+  }
+
+  const commonGoals = sharedItems(entrepreneur.goals ?? [], candidate.goals ?? []).slice(0, 2);
+  if (commonGoals.length > 0) {
+    score += commonGoals.length * 5;
+    reasonDetails.push({ key: 'entrepreneur.reasonGoal', params: { items: commonGoals.join(', ') } });
+  }
+
+  return { score: Math.min(100, score), reasons: [], reasonDetails };
+}
+
 export function localizeMatchReasons(
   result: MatchResult,
   translate: (key: string, params?: Record<string, string | number>) => string,
@@ -112,6 +153,7 @@ export function localizeMatchReasons(
 // gerçek kullanım verisine göre ayarlanabilir.
 export function computeMatchScore(a: Profile, b: Profile): MatchResult {
   if (a.role === 'yatirimci') return computeInvestorPriorityScore(a, b);
+  if (a.role === 'girisimci') return computeEntrepreneurPriorityScore(a, b);
 
   let score = 0;
   const reasons: string[] = [];

@@ -82,6 +82,7 @@ function Field({
   onChangeText,
   placeholder,
   multiline,
+  error,
   keyboardType = 'default',
 }: {
   label: string;
@@ -89,13 +90,14 @@ function Field({
   onChangeText: (value: string) => void;
   placeholder?: string;
   multiline?: boolean;
+  error?: boolean;
   keyboardType?: 'default' | 'email-address' | 'numeric' | 'phone-pad' | 'url';
 }) {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
-        style={[styles.input, multiline && styles.textarea]}
+        style={[styles.input, multiline && styles.textarea, error && styles.inputError]}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -623,16 +625,21 @@ const ATTENDEE_ROLES: AttendeeRole[] = ['Girişimci', 'Yatırımcı', 'Kurum / P
 export function AttendeeEditorModal({
   visible,
   attendee,
+  saveError,
   onClose,
   onSave,
+  onClearError,
   onDelete,
 }: {
   visible: boolean;
   attendee: AdminAttendee | null;
+  saveError?: string | null;
   onClose: () => void;
-  onSave: (data: Partial<AdminAttendee>, id?: string) => void;
+  onSave: (data: Partial<AdminAttendee>, id?: string) => Promise<boolean>;
+  onClearError?: () => void;
   onDelete?: (id: string) => void;
 }) {
+  const [validationError, setValidationError] = useState('');
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -649,7 +656,9 @@ export function AttendeeEditorModal({
     status: 'active' as AdminAttendee['status'],
   });
   useEffect(
-    () =>
+    () => {
+      setValidationError('');
+      if (visible) onClearError?.();
       setForm({
         firstName: attendee?.firstName || '',
         lastName: attendee?.lastName || '',
@@ -664,16 +673,31 @@ export function AttendeeEditorModal({
         linkedin: attendee?.linkedin || '',
         notes: attendee?.notes || '',
         status: attendee?.status || 'active',
-      }),
-    [attendee, visible],
+      });
+    },
+    [attendee, visible, onClearError],
   );
-  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
+  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
+    setValidationError('');
+    onClearError?.();
     setForm((current) => ({ ...current, [key]: value }));
-  function submit() {
-    if (!form.firstName.trim() || !form.lastName.trim()) return;
-    onSave(
+  };
+  const requiresEntrepreneurIdentity = form.role === 'Girişimci' && form.status === 'active';
+  async function submit() {
+    if (!form.firstName.trim() || !form.lastName.trim()) {
+      setValidationError('Ad ve soyad alanlarını doldurun.');
+      return;
+    }
+    if (requiresEntrepreneurIdentity && (!form.title.trim() || !form.company.trim())) {
+      setValidationError('Aktif girişimci profili için unvan ve şirket alanlarını doldurun.');
+      return;
+    }
+    const saved = await onSave(
       {
         ...form,
+        title: form.title.trim(),
+        position: form.position.trim(),
+        company: form.company.trim(),
         name: form.firstName.trim() + ' ' + form.lastName.trim(),
         interests: form.interests
           .split(',')
@@ -682,8 +706,9 @@ export function AttendeeEditorModal({
       },
       attendee?.id,
     );
-    onClose();
+    if (saved) onClose();
   }
+  const displayedError = validationError || saveError;
   return (
     <BaseModal
       visible={visible}
@@ -699,6 +724,11 @@ export function AttendeeEditorModal({
         />
       }
     >
+      {displayedError ? (
+        <View style={styles.validationBanner}>
+          <Text style={styles.validationText}>{displayedError}</Text>
+        </View>
+      ) : null}
       <View style={styles.twoCol}>
         <View style={styles.flex}>
           <Field label="Ad *" value={form.firstName} onChangeText={(v) => set('firstName', v)} />
@@ -707,9 +737,19 @@ export function AttendeeEditorModal({
           <Field label="Soyad *" value={form.lastName} onChangeText={(v) => set('lastName', v)} />
         </View>
       </View>
-      <Field label="Unvan" value={form.title} onChangeText={(v) => set('title', v)} />
+      <Field
+        label={`Unvan${requiresEntrepreneurIdentity ? ' *' : ''}`}
+        value={form.title}
+        onChangeText={(v) => set('title', v)}
+        error={requiresEntrepreneurIdentity && !form.title.trim() && !!displayedError}
+      />
       <Field label="Pozisyon" value={form.position} onChangeText={(v) => set('position', v)} />
-      <Field label="Şirket" value={form.company} onChangeText={(v) => set('company', v)} />
+      <Field
+        label={`Şirket${requiresEntrepreneurIdentity ? ' *' : ''}`}
+        value={form.company}
+        onChangeText={(v) => set('company', v)}
+        error={requiresEntrepreneurIdentity && !form.company.trim() && !!displayedError}
+      />
       <Choices
         label="Rol"
         value={form.role}
@@ -1217,6 +1257,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     fontSize: 14,
   },
+  inputError: { borderColor: colors.danger },
+  validationBanner: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    backgroundColor: colors.dangerBg,
+  },
+  validationText: { color: colors.danger, fontSize: 12, fontWeight: '700', lineHeight: 18 },
   textarea: { minHeight: 94, paddingTop: 12 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   choice: {

@@ -1,8 +1,17 @@
 import { Calendar, Clock, Send, X } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
+import { ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import type { Profile } from '../../types';
@@ -18,6 +27,14 @@ type ScheduleMeetingModalProps = {
 const DATES = ['24 Ekim', '25 Ekim', '26 Ekim', '27 Ekim'];
 const TIMES = ['09:30', '11:00', '14:00', '15:30', '16:45', '17:30'];
 
+function proposedDate(dateLabel: string, time: string) {
+  const day = Number(dateLabel.split(' ')[0]);
+  const eventDay = String(day).padStart(2, '0');
+  // Event slots are canonical Istanbul times; device timezone must not shift
+  // the request sent to another participant.
+  return new Date(`2026-10-${eventDay}T${time}:00+03:00`);
+}
+
 export function ScheduleMeetingModal({
   visible,
   onClose,
@@ -29,20 +46,88 @@ export function ScheduleMeetingModal({
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [selectedDate, setSelectedDate] = useState(DATES[0]);
   const [selectedTime, setSelectedTime] = useState(TIMES[0]);
+  const [availableTimes, setAvailableTimes] = useState<string[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState(false);
+  const [availabilityRefreshKey, setAvailabilityRefreshKey] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedParticipant =
+    participants.find((participant) => participant.user_id === selectedUserId) ?? null;
+  const participantLocked = !!preSelectedUserId;
 
   useEffect(() => {
     if (visible) {
       setSelectedUserId(preSelectedUserId || participants[0]?.user_id || '');
       setSelectedDate(DATES[0]);
       setSelectedTime(TIMES[0]);
+      setAvailableTimes([]);
+      setAvailabilityError(false);
       setError(null);
     }
   }, [visible, preSelectedUserId, participants]);
 
+  useEffect(() => {
+    if (!visible || !selectedUserId) {
+      setAvailableTimes([]);
+      setAvailabilityLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const candidateSlots = TIMES.map((time) => proposedDate(selectedDate, time));
+
+    setAvailabilityLoading(true);
+    setAvailabilityError(false);
+    setAvailableTimes([]);
+
+    async function loadAvailability() {
+      try {
+        const { data, error: availabilityQueryError } = await supabase.rpc(
+          'get_meeting_available_slots',
+          {
+            target_user_id: selectedUserId,
+            candidate_slots: candidateSlots.map((slot) => slot.toISOString()),
+          },
+        );
+
+        if (cancelled) return;
+        setAvailabilityLoading(false);
+
+        if (availabilityQueryError) {
+          setAvailabilityError(true);
+          setSelectedTime('');
+          return;
+        }
+
+        const availableIsoSlots = new Set(
+          ((data ?? []) as { slot: string }[]).map((row) => new Date(row.slot).toISOString()),
+        );
+        const nextAvailableTimes = TIMES.filter((_, index) =>
+          availableIsoSlots.has(candidateSlots[index].toISOString()),
+        );
+
+        setAvailableTimes(nextAvailableTimes);
+        setSelectedTime((current) =>
+          nextAvailableTimes.includes(current) ? current : (nextAvailableTimes[0] ?? ''),
+        );
+      } catch {
+        if (cancelled) return;
+        setAvailabilityLoading(false);
+        setAvailabilityError(true);
+        setSelectedTime('');
+      }
+    }
+
+    void loadAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [availabilityRefreshKey, selectedDate, selectedUserId, visible]);
+
   async function handleSubmit() {
-    if (!selectedUserId) return;
+    if (!selectedUserId || !selectedTime || !availableTimes.includes(selectedTime)) return;
     setSubmitting(true);
     setError(null);
 
@@ -56,11 +141,7 @@ export function ScheduleMeetingModal({
       return;
     }
 
-    const currentYear = new Date().getFullYear();
-    const [day, monthName] = selectedDate.split(' ');
-    const monthIndex = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'].indexOf(monthName);
-    const [hours, minutes] = selectedTime.split(':').map(Number);
-    const proposedTime = new Date(currentYear, monthIndex >= 0 ? monthIndex : 9, Number(day), hours, minutes);
+    const proposedTime = proposedDate(selectedDate, selectedTime);
 
     const { error: insertError } = await supabase.from('meeting_requests').insert({
       from_user_id: user.id,
@@ -72,7 +153,21 @@ export function ScheduleMeetingModal({
     setSubmitting(false);
 
     if (insertError) {
-      setError(insertError.message);
+      const slotUnavailable =
+        insertError.message.includes('no longer available')
+        || insertError.message.includes('conflicts with a saved session');
+      const pendingExists = insertError.message.includes('already a pending request');
+      const pendingLimitReached = insertError.message.includes('Resolve existing pending requests');
+      setError(
+        slotUnavailable
+          ? t('modals.scheduleSlotUnavailable')
+          : pendingExists
+            ? t('modals.schedulePendingExists')
+            : pendingLimitReached
+              ? t('modals.schedulePendingLimit')
+              : insertError.message,
+      );
+      if (slotUnavailable) setAvailabilityRefreshKey((current) => current + 1);
       return;
     }
 
@@ -98,19 +193,70 @@ export function ScheduleMeetingModal({
           </View>
 
           <ScrollView style={styles.body} contentContainerStyle={{ gap: 18 }}>
+            {participantLocked && selectedParticipant ? (
+              <View style={{ gap: 8 }}>
+                <Text style={styles.label}>{t('modals.scheduleWith')}</Text>
+                <View style={styles.selectedPersonCard}>
+                  <View style={styles.selectedPersonAvatar}>
+                    <Text style={styles.selectedPersonAvatarText}>
+                      {selectedParticipant.full_name
+                        .split(' ')
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .map((part) => part[0]?.toUpperCase())
+                        .join('')}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.selectedPersonName} numberOfLines={1}>
+                      {selectedParticipant.full_name}
+                    </Text>
+                    <Text style={styles.selectedPersonMeta} numberOfLines={1}>
+                      {[t(ROLE_LABEL_KEY[selectedParticipant.role]), selectedParticipant.company]
+                        .filter(Boolean)
+                        .join(' | ')}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            ) : (
+              <View style={{ gap: 8 }}>
+                <Text style={styles.label}>{t('modals.scheduleParticipant')}</Text>
+                <View style={styles.chipRow}>
+                  {participants.map((p) => {
+                    const selected = selectedUserId === p.user_id;
+                    return (
+                      <Pressable
+                        key={p.user_id}
+                        onPress={() => setSelectedUserId(p.user_id)}
+                        style={[styles.personChip, selected && styles.chipSelected]}
+                      >
+                        <Text
+                          style={[styles.chipText, selected && styles.chipTextSelected]}
+                          numberOfLines={1}
+                        >
+                          {p.full_name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
             <View style={{ gap: 8 }}>
-              <Text style={styles.label}>{t('modals.scheduleParticipant')}</Text>
+              <Text style={styles.label}>{t('modals.scheduleDate')}</Text>
               <View style={styles.chipRow}>
-                {participants.map((p) => {
-                  const selected = selectedUserId === p.user_id;
+                {DATES.map((d) => {
+                  const selected = selectedDate === d;
                   return (
                     <Pressable
-                      key={p.user_id}
-                      onPress={() => setSelectedUserId(p.user_id)}
-                      style={[styles.personChip, selected && styles.chipSelected]}
+                      key={d}
+                      onPress={() => setSelectedDate(d)}
+                      style={[styles.chip, selected && styles.chipSelected]}
                     >
-                      <Text style={[styles.chipText, selected && styles.chipTextSelected]} numberOfLines={1}>
-                        {p.full_name}
+                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>
+                        {d}
                       </Text>
                     </Pressable>
                   );
@@ -119,43 +265,55 @@ export function ScheduleMeetingModal({
             </View>
 
             <View style={{ gap: 8 }}>
-              <Text style={styles.label}>{t('modals.scheduleDate')}</Text>
-              <View style={styles.chipRow}>
-                {DATES.map((d) => {
-                  const selected = selectedDate === d;
-                  return (
-                    <Pressable key={d} onPress={() => setSelectedDate(d)} style={[styles.chip, selected && styles.chipSelected]}>
-                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{d}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View style={{ gap: 8 }}>
               <Text style={styles.label}>{t('modals.scheduleTime')}</Text>
-              <View style={styles.chipRow}>
-                {TIMES.map((time) => {
-                  const selected = selectedTime === time;
-                  return (
-                    <Pressable
-                      key={time}
-                      onPress={() => setSelectedTime(time)}
-                      style={[styles.chip, selected && styles.chipSelectedDark]}
-                    >
-                      <Clock size={12} color={selected ? colors.white : colors.textMuted} />
-                      <Text style={[styles.chipText, selected && { color: colors.white }]}>{time}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <Text style={styles.availabilityHint}>{t('modals.scheduleAvailabilityHint')}</Text>
+              {availabilityLoading ? (
+                <View style={styles.availabilityState}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.availabilityStateText}>
+                    {t('modals.scheduleCheckingAvailability')}
+                  </Text>
+                </View>
+              ) : availabilityError ? (
+                <Text style={styles.availabilityError}>
+                  {t('modals.scheduleAvailabilityError')}
+                </Text>
+              ) : availableTimes.length === 0 ? (
+                <Text style={styles.availabilityEmpty}>{t('modals.scheduleNoAvailability')}</Text>
+              ) : (
+                <View style={styles.chipRow}>
+                  {availableTimes.map((time) => {
+                    const selected = selectedTime === time;
+                    return (
+                      <Pressable
+                        key={time}
+                        onPress={() => setSelectedTime(time)}
+                        style={[styles.chip, selected && styles.chipSelectedDark]}
+                      >
+                        <Clock size={12} color={selected ? colors.white : colors.textMuted} />
+                        <Text style={[styles.chipText, selected && { color: colors.white }]}>
+                          {time}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
             </View>
 
             {error ? <Text style={styles.error}>{error}</Text> : null}
           </ScrollView>
 
           <View style={styles.footer}>
-            <Pressable style={styles.submitBtn} onPress={handleSubmit} disabled={submitting || !selectedUserId}>
+            <Pressable
+              style={[
+                styles.submitBtn,
+                (submitting || availabilityLoading || !selectedUserId || !selectedTime) &&
+                  styles.submitBtnDisabled,
+              ]}
+              onPress={handleSubmit}
+              disabled={submitting || availabilityLoading || !selectedUserId || !selectedTime}
+            >
               <Send size={16} color={colors.white} />
               <Text style={styles.submitBtnText}>
                 {submitting ? t('common.loading') : t('modals.scheduleSubmit')}
@@ -169,7 +327,12 @@ export function ScheduleMeetingModal({
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(25,28,29,0.6)', justifyContent: 'center', padding: 16 },
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(25,28,29,0.6)',
+    justifyContent: 'center',
+    padding: 16,
+  },
   card: {
     backgroundColor: colors.white,
     borderRadius: 20,
@@ -218,10 +381,43 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     maxWidth: '100%',
   },
+  selectedPersonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: colors.primarySoft,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  selectedPersonAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectedPersonAvatarText: { color: colors.primary, fontSize: 13, fontWeight: '800' },
+  selectedPersonName: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  selectedPersonMeta: { color: colors.textMuted, fontSize: 11, marginTop: 2 },
   chipSelected: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
   chipSelectedDark: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 12, fontWeight: '600', color: colors.textMuted },
   chipTextSelected: { color: colors.primary },
+  availabilityHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16 },
+  availabilityState: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40 },
+  availabilityStateText: { color: colors.textMuted, fontSize: 12 },
+  availabilityError: { color: colors.danger, fontSize: 12, lineHeight: 17 },
+  availabilityEmpty: {
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceMuted,
+  },
   error: { color: colors.danger, fontSize: 12, textAlign: 'center' },
   footer: { padding: 18, borderTopWidth: 1, borderTopColor: colors.border },
   submitBtn: {
@@ -234,4 +430,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   submitBtnText: { color: colors.white, fontWeight: '700', fontSize: 14 },
+  submitBtnDisabled: { opacity: 0.55 },
 });

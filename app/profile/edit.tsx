@@ -122,7 +122,15 @@ export default function EditProfileScreen() {
       setError(t('editProfile.nameRequired'));
       return;
     }
+    if (profile?.role === 'girisimci' && (!title.trim() || !company.trim())) {
+      setError(t('entrepreneur.profileRequired'));
+      return;
+    }
     if (profile?.role === 'yatirimci') {
+      if (!investmentThesis.trim()) {
+        setError(t('investor.thesisRequired'));
+        return;
+      }
       const secondaryCount = investmentFocuses.filter((focus) => focus !== sector).length;
       if (secondaryCount < 1 || secondaryCount > 2) {
         setError(t('investor.secondaryFocusRequired'));
@@ -154,7 +162,7 @@ export default function EditProfileScreen() {
       ...(profile?.role === 'yatirimci'
         ? {
             investment_focuses: investmentFocuses.filter((focus) => focus !== sector),
-            investment_thesis: investmentThesis.trim() || null,
+            investment_thesis: investmentThesis.trim(),
           }
         : {}),
       linkedin_url: linkedin || null,
@@ -167,7 +175,7 @@ export default function EditProfileScreen() {
       .update(updatePayload)
       .eq('user_id', user.id);
 
-    if (updateError && profile?.role !== 'yatirimci' && isInvestorSchemaMissing(updateError)) {
+    if (updateError && !['yatirimci', 'girisimci'].includes(profile?.role ?? '') && isInvestorSchemaMissing(updateError)) {
       const legacyResult = await supabase
         .from('profiles')
         .update({
@@ -184,7 +192,7 @@ export default function EditProfileScreen() {
     setSaving(false);
 
     if (updateError) {
-      setError(isInvestorSchemaMissing(updateError) ? t('investor.migrationRequired') : updateError.message);
+      setError(isInvestorSchemaMissing(updateError) ? t(profile?.role === 'girisimci' ? 'entrepreneur.migrationRequired' : 'investor.migrationRequired') : updateError.message);
       return;
     }
 
@@ -261,23 +269,23 @@ export default function EditProfileScreen() {
           ) : null}
 
           <View style={styles.field}>
-            <Text style={styles.label}>{t(profile?.role === 'yatirimci' ? 'investor.titleLabel' : 'editProfile.titleLabel')}</Text>
+            <Text style={styles.label}>{t(profile?.role === 'yatirimci' ? 'investor.titleLabel' : profile?.role === 'girisimci' ? 'entrepreneur.titleLabel' : 'editProfile.titleLabel')}</Text>
             <TextInput
               style={styles.input}
               value={title}
               onChangeText={setTitle}
-              placeholder={t(profile?.role === 'yatirimci' ? 'investor.titlePlaceholder' : 'editProfile.titlePlaceholder')}
+              placeholder={t(profile?.role === 'yatirimci' ? 'investor.titlePlaceholder' : profile?.role === 'girisimci' ? 'entrepreneur.titlePlaceholder' : 'editProfile.titlePlaceholder')}
               placeholderTextColor={colors.textFaint}
             />
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>{profile?.role === 'girisimci' ? t('onboarding.founderCompanyLabel') : profile?.role === 'yatirimci' ? t('investor.fundLabel') : t('onboarding.companyLabel')}</Text>
+            <Text style={styles.label}>{profile?.role === 'girisimci' ? t('entrepreneur.companyLabel') : profile?.role === 'yatirimci' ? t('investor.fundLabel') : t('onboarding.companyLabel')}</Text>
             <TextInput
               style={styles.input}
               value={company}
               onChangeText={setCompany}
-              placeholder={profile?.role === 'girisimci' ? t('onboarding.founderCompanyPlaceholder') : profile?.role === 'yatirimci' ? t('investor.fundPlaceholder') : t('onboarding.companyPlaceholder')}
+              placeholder={profile?.role === 'girisimci' ? t('entrepreneur.companyPlaceholder') : profile?.role === 'yatirimci' ? t('investor.fundPlaceholder') : t('onboarding.companyPlaceholder')}
               placeholderTextColor={colors.textFaint}
               autoComplete="organization"
               textContentType="organizationName"

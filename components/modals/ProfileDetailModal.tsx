@@ -64,6 +64,11 @@ export function ProfileDetailModal({
             </View>
 
             <Text style={styles.name}>{profile.full_name}</Text>
+            {profile.title || profile.company ? (
+              <Text style={styles.professionalLine} numberOfLines={2}>
+                {[profile.title, profile.company].filter(Boolean).join(' · ')}
+              </Text>
+            ) : null}
             <View style={styles.tagRow}>
               <View style={styles.tag}>
                 <Text style={styles.tagTextPrimary}>{t(ROLE_LABEL_KEY[profile.role])}</Text>
@@ -194,6 +199,7 @@ const styles = StyleSheet.create({
   },
   scoreBadgeText: { color: colors.white, fontSize: 11, fontWeight: '800' },
   name: { fontSize: 20, fontWeight: '800', color: colors.text },
+  professionalLine: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 5, textAlign: 'center' },
   tagRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
   tag: { paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999, backgroundColor: colors.primarySoft },
   tagTextPrimary: { fontSize: 11, fontWeight: '700', color: colors.primary },

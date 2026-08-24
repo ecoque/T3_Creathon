@@ -22,7 +22,10 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
-  if not public.is_admin() and new.status is distinct from old.status then
+  if auth.uid() is not null
+    and auth.role() <> 'service_role'
+    and not public.is_admin()
+    and new.status is distinct from old.status then
     raise exception 'Admin-managed profile fields cannot be changed by this user.';
   end if;
   return new;
@@ -45,7 +48,7 @@ end
 $$;
 
 comment on column public.profiles.investment_thesis is
-  'Optional public investment thesis for investor discovery matching.';
+  'Required for active investor profiles and used for discovery matching.';
 comment on column public.profiles.investment_focuses is
   'One or two secondary investor focus areas; profiles.sector is the primary focus.';
 
@@ -61,6 +64,20 @@ begin
     alter table public.profiles
       add constraint profiles_investment_thesis_max_length
       check (investment_thesis is null or char_length(investment_thesis) <= 280)
+      not valid;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.profiles'::regclass
+      and conname = 'profiles_investment_thesis_required'
+  ) then
+    alter table public.profiles
+      add constraint profiles_investment_thesis_required
+      check (
+        role <> 'yatirimci'
+        or status = 'passive'
+        or coalesce(investment_thesis ~ '[^[:space:]]', false)
+      )
       not valid;
   end if;
   if not exists (

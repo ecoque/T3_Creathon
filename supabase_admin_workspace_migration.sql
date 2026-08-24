@@ -228,9 +228,10 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
-  if not public.is_admin() and (
-    new.status is distinct from old.status
-  ) then
+  if auth.uid() is not null
+    and auth.role() <> 'service_role'
+    and not public.is_admin()
+    and new.status is distinct from old.status then
     raise exception 'Admin-managed profile fields cannot be changed by this user.';
   end if;
   return new;

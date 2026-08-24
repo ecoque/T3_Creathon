@@ -45,13 +45,16 @@ export default function DiscoverScreen() {
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const isInvestor = myProfile?.role === 'yatirimci';
+  const isEntrepreneur = myProfile?.role === 'girisimci';
   const shortlist = useInvestorCoreFlow(meResult?.userId, isInvestor);
 
   const visibleParticipants = useMemo(
     () => isInvestor
       ? participants.filter((profile) => ['girisimci', 'kurum'].includes(profile.role) && profile.status === 'active')
-      : participants,
-    [isInvestor, participants],
+      : isEntrepreneur
+        ? participants.filter((profile) => ['girisimci', 'kurum', 'yatirimci'].includes(profile.role) && profile.status !== 'passive')
+        : participants,
+    [isEntrepreneur, isInvestor, participants],
   );
 
   const scored = useMemo(() => {
@@ -90,9 +93,16 @@ export default function DiscoverScreen() {
     return true;
   });
 
-  const featured = filtered.filter((f) => f.score >= 40).sort((a, b) => b.score - a.score);
-  const otherMatches = filtered.filter((f) => f.score < 40);
-  const others = isInvestor ? [...otherMatches].sort((a, b) => b.score - a.score) : otherMatches;
+  // Keep both sections score-ordered. Founder matches can be useful before
+  // they reach the high-confidence threshold, so surface the best available
+  // candidates instead of leaving the recommendation area empty.
+  const rankedMatches = [...filtered].sort((a, b) => b.score - a.score);
+  const highConfidenceMatches = rankedMatches.filter((match) => match.score >= 40);
+  const featured = highConfidenceMatches.length > 0
+    ? highConfidenceMatches
+    : rankedMatches.slice(0, 3);
+  const featuredIds = new Set(featured.map((match) => match.profile.id));
+  const others = rankedMatches.filter((match) => !featuredIds.has(match.profile.id));
   const isFilterActive = filter.roles.length > 0 || filter.sector !== '' || filter.interests.length > 0;
 
   function toggleConnect(userId: string) {
@@ -137,7 +147,7 @@ export default function DiscoverScreen() {
             <View style={styles.titleRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.title}>{t('matching.title')}</Text>
-                <Text style={styles.subtitle}>{t(isInvestor ? 'investor.discoverySubtitle' : 'matching.subtitle')}</Text>
+                <Text style={styles.subtitle}>{t(isInvestor ? 'investor.discoverySubtitle' : isEntrepreneur ? 'entrepreneur.discoverySubtitle' : 'matching.subtitle')}</Text>
               </View>
               <Pressable
                 style={[styles.filterBtn, isFilterActive && styles.filterBtnActive]}
@@ -171,7 +181,7 @@ export default function DiscoverScreen() {
               <FlatList
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                data={['all', ...ROLES] as (ParticipantRole | 'all')[]}
+                data={(isEntrepreneur ? ['all', 'girisimci', 'kurum', 'yatirimci'] : ['all', ...ROLES]) as (ParticipantRole | 'all')[]}
                 keyExtractor={(r) => r}
                 contentContainerStyle={{ gap: 8 }}
                 renderItem={({ item }) => {
@@ -190,14 +200,14 @@ export default function DiscoverScreen() {
             )}
 
             {participantsLoading ? <Text style={styles.flowStatus}>{t('common.loading')}</Text> : null}
-            {participantsError ? <Text style={styles.flowError}>{t('investor.discoveryLoadError')}</Text> : null}
+            {participantsError ? <Text style={styles.flowError}>{t(isEntrepreneur ? 'entrepreneur.discoveryLoadError' : 'investor.discoveryLoadError')}</Text> : null}
             {isInvestor && shortlist.isLoading ? <Text style={styles.flowStatus}>{t('investor.shortlistLoading')}</Text> : null}
             {isInvestor && shortlistErrorMessage ? <Text style={styles.flowError}>{shortlistErrorMessage}</Text> : null}
 
             <View style={{ gap: 12 }}>
               <View style={styles.sectionHeaderRow}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.priorityCandidates' : 'matching.featured')}</Text>
+                  <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.priorityCandidates' : isEntrepreneur ? 'entrepreneur.recommendedMatches' : 'matching.featured')}</Text>
                   <View style={styles.aiBadge}>
                     <Sparkles size={10} color={colors.primary} />
                     <Text style={styles.aiBadgeText}>AI</Text>
@@ -269,7 +279,7 @@ export default function DiscoverScreen() {
                           <Pressable style={styles.matchIconBtn} onPress={() => setWhyMatchProfile(item.profile)}>
                             <Handshake size={17} color={colors.white} />
                           </Pressable>
-                          {isInvestor ? (
+                          {isInvestor || isEntrepreneur ? (
                             <Pressable style={styles.secondaryIconBtn} onPress={() => { setScheduleFor(item.profile); setScheduleOpen(true); }} accessibilityLabel={t('matching.requestMeeting')}>
                               <Calendar size={17} color={colors.primary} />
                             </Pressable>
@@ -282,7 +292,7 @@ export default function DiscoverScreen() {
               )}
             </View>
 
-            <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.otherCandidates' : 'matching.others')}</Text>
+            <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.otherCandidates' : isEntrepreneur ? 'entrepreneur.otherMatches' : 'matching.others')}</Text>
           </View>
         }
         ListEmptyComponent={
@@ -339,7 +349,7 @@ export default function DiscoverScreen() {
               <Pressable style={styles.rowIconBtn} onPress={(event) => { event.stopPropagation(); setWhyMatchProfile(item.profile); }} accessibilityLabel={t('matching.whyMatch')}>
                 <Handshake size={16} color={colors.textMuted} />
               </Pressable>
-              {isInvestor ? (
+              {isInvestor || isEntrepreneur ? (
                 <Pressable style={styles.rowIconBtn} onPress={(event) => { event.stopPropagation(); setScheduleFor(item.profile); setScheduleOpen(true); }} accessibilityLabel={t('matching.requestMeeting')}>
                   <Calendar size={16} color={colors.primary} />
                 </Pressable>

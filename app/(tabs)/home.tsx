@@ -13,7 +13,7 @@ import {
 } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppHeader } from '../../components/AppHeader';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
@@ -23,7 +23,8 @@ import { WhyMatchModal } from '../../components/modals/WhyMatchModal';
 import { ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
 import { venuePoints } from '../../constants/venuePoints';
-import { rankMatches } from '../../features/matching/scoring';
+import { rankSessionsForProfile } from '../../features/agenda/sessionRecommendations';
+import { localizeMatchReasons, rankMatches } from '../../features/matching/scoring';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useMeetingRequests } from '../../lib/useMeetingRequests';
 import type { MeetingRequestItem } from '../../lib/useMeetingRequests';
@@ -35,6 +36,7 @@ import type { Profile, Session } from '../../types';
 // Ardışık iki ajanda öğesi arasında bu kadar (ms) boşluk varsa, o aralığa
 // bir eşleştirme önerisi düşürülür.
 const GAP_SUGGESTION_THRESHOLD_MS = 60 * 60 * 1000;
+const EMPTY_SESSION_BOOKMARKS = new Set<string>();
 
 async function fetchSessions(): Promise<Session[]> {
   const { data, error } = await supabase
@@ -115,9 +117,10 @@ export default function HomeScreen() {
   const myProfile = meResult?.profile ?? null;
   const { data: sessions = [] } = useQuery({ queryKey: ['sessions'], queryFn: fetchSessions });
   const { data: meetingResult } = useMeetingRequests();
-  const meetingItems = meetingResult?.items ?? [];
+  const meetingItems = useMemo(() => meetingResult?.items ?? [], [meetingResult?.items]);
   const { data: otherProfiles = [] } = useOtherProfiles();
-  const { data: bookmarks = new Set<string>() } = useSessionBookmarks();
+  const bookmarkQuery = useSessionBookmarks();
+  const bookmarks = bookmarkQuery.data ?? EMPTY_SESSION_BOOKMARKS;
   const toggleBookmarkMutation = useToggleSessionBookmark();
 
   const [viewMode, setViewMode] = useState<ViewMode>('day');
@@ -125,6 +128,7 @@ export default function HomeScreen() {
   const [calendarCursor, setCalendarCursor] = useState<Date | null>(null);
   const [search, setSearch] = useState('');
   const [onlyBookmarked, setOnlyBookmarked] = useState(false);
+  const [showAllSessions, setShowAllSessions] = useState(false);
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [connectedIds, setConnectedIds] = useState<Set<string>>(new Set());
@@ -167,6 +171,32 @@ export default function HomeScreen() {
 
     return [...sessionEntries, ...meetingEntries].sort((a, b) => a.start.getTime() - b.start.getTime());
   }, [sessions, meetingItems]);
+
+  const recommendedSessions = useMemo(() => {
+    if (!myProfile) return [];
+    return rankSessionsForProfile(myProfile, sessions);
+  }, [myProfile, sessions]);
+
+  // Her etkinlik günü için profille en uyumlu ilk üç oturum akıllı ajandaya
+  // girer. Puan üretmeyen günlerde ekranı boş bırakmamak için kronolojik ilk
+  // üç oturum keşif önerisi olarak kullanılır.
+  const recommendedSessionIds = useMemo(() => {
+    const ids = new Set<string>();
+    const byDay = new Map<string, typeof recommendedSessions>();
+    recommendedSessions.forEach((recommendation) => {
+      const key = dayKey(new Date(recommendation.session.start_time));
+      byDay.set(key, [...(byDay.get(key) ?? []), recommendation]);
+    });
+    byDay.forEach((dayRecommendations) => {
+      const positive = dayRecommendations.filter((item) => item.score > 0);
+      (positive.length > 0 ? positive : dayRecommendations).slice(0, 3).forEach((item) => ids.add(item.session.id));
+    });
+    return ids;
+  }, [recommendedSessions]);
+  const profileMatchedSessionIds = useMemo(
+    () => new Set(recommendedSessions.filter((item) => item.score > 0).map((item) => item.session.id)),
+    [recommendedSessions],
+  );
 
   const days = useMemo(() => {
     const map = new Map<string, Date>();
@@ -235,18 +265,24 @@ export default function HomeScreen() {
   const visibleEntries = useMemo(() => {
     return entries.filter((e) => {
       if (dayKey(e.start) !== activeDayKeyStr) return false;
-      if (onlyBookmarked && e.kind === 'session' && !bookmarks.has(e.session.id)) return false;
+      if (e.kind === 'session') {
+        if (onlyBookmarked && !bookmarks.has(e.session.id)) return false;
+        const smartAgendaOnly = !onlyBookmarked && !showAllSessions && !search.trim();
+        if (smartAgendaOnly && !bookmarks.has(e.session.id) && !recommendedSessionIds.has(e.session.id)) return false;
+      }
       if (search.trim()) {
         const q = search.toLowerCase();
         const hay =
           e.kind === 'session'
             ? `${e.session.title} ${e.session.location ?? ''} ${e.session.description ?? ''}`
-            : `${e.meeting.otherProfile?.full_name ?? ''} ${e.meeting.otherProfile?.sector ?? ''} ${t('home.meetingBadge')}`;
+            : e.kind === 'meeting'
+              ? `${e.meeting.otherProfile?.full_name ?? ''} ${e.meeting.otherProfile?.sector ?? ''} ${t('home.meetingBadge')}`
+              : `${e.profile.full_name} ${e.profile.sector ?? ''} ${e.profile.interests.join(' ')}`;
         if (!hay.toLowerCase().includes(q)) return false;
       }
       return true;
     });
-  }, [entries, activeDayKeyStr, onlyBookmarked, bookmarks, search, t]);
+  }, [entries, activeDayKeyStr, onlyBookmarked, showAllSessions, bookmarks, recommendedSessionIds, search, t]);
 
   // Halihazırda kendisiyle toplantısı olan (bekleyen/kabul edilen/reddedilen fark etmez,
   // zaten temas kurulmuş) katılımcılar boşluk önerilerinde tekrar önerilmez.
@@ -256,10 +292,18 @@ export default function HomeScreen() {
 
   const availableCandidates = useMemo(() => {
     if (!myProfile) return [];
-    return rankMatches(myProfile, otherProfiles).filter(
-      (c) => c.score > 0 && !engagedUserIds.has(c.profile.user_id),
-    );
-  }, [myProfile, otherProfiles, engagedUserIds]);
+    return rankMatches(myProfile, otherProfiles)
+      .filter(
+        (candidate) =>
+          candidate.profile.status === 'active'
+          && candidate.score > 0
+          && !engagedUserIds.has(candidate.profile.user_id),
+      )
+      .map((candidate) => ({
+        ...candidate,
+        reasons: localizeMatchReasons(candidate, t),
+      }));
+  }, [myProfile, otherProfiles, engagedUserIds, t]);
 
   // Görüntülenen günde ardışık iki öğe arasında 1 saat veya daha uzun boşluk
   // varsa, aynı gün içinde daha önce önerilmemiş en uygun kişiyi o boşluğa düşürür.
@@ -296,7 +340,15 @@ export default function HomeScreen() {
   }, [visibleEntries, availableCandidates, activeDayKeyStr]);
 
   function toggleBookmark(id: string) {
-    toggleBookmarkMutation.mutate({ sessionId: id, bookmarked: bookmarks.has(id) });
+    toggleBookmarkMutation.mutate(
+      { sessionId: id, bookmarked: bookmarks.has(id) },
+      {
+        onError: (mutationError) => {
+          const conflict = mutationError instanceof Error && mutationError.message.includes('overlaps');
+          Alert.alert(t('home.smartAgendaTitle'), t(conflict ? 'home.bookmarkConflictError' : 'home.bookmarkSyncError'));
+        },
+      },
+    );
   }
 
   function goToMap(locationText?: string | null) {
@@ -313,7 +365,9 @@ export default function HomeScreen() {
   }
 
   const firstName = meResult?.profile?.full_name?.split(' ')[0] ?? '';
-  const bookmarkedToday = visibleEntries.filter((e) => e.kind === 'session' && bookmarks.has(e.session.id)).length;
+  const pendingIncomingCount = meetingItems.filter(
+    (meeting) => meeting.direction === 'incoming' && meeting.status === 'pending',
+  ).length;
 
   return (
     <View style={styles.screen}>
@@ -331,9 +385,34 @@ export default function HomeScreen() {
             <View>
               <Text style={styles.greeting}>{t('home.greeting', { name: firstName || '👋' })}</Text>
               <Text style={styles.subtitle}>
-                {t('home.itemsToday', { count: bookmarkedToday || visibleEntries.length })}
+                {t('home.itemsToday', { count: visibleEntries.length })}
               </Text>
             </View>
+
+            <View style={styles.smartAgendaCard}>
+              <View style={styles.smartAgendaTitleRow}>
+                <Sparkles size={16} color={colors.primary} />
+                <Text style={styles.smartAgendaTitle}>{t('home.smartAgendaTitle')}</Text>
+              </View>
+              <Text style={styles.smartAgendaHint}>
+                {t('home.smartAgendaHint')}
+              </Text>
+              {pendingIncomingCount > 0 ? (
+                <Pressable onPress={() => router.push('/(tabs)/meetings')}>
+                  <Text style={styles.smartAgendaAction}>
+                    {t('home.pendingMeetingAction', { count: pendingIncomingCount })}
+                  </Text>
+                </Pressable>
+              ) : null}
+              <Pressable onPress={() => setShowAllSessions((current) => !current)}>
+                <Text style={styles.smartAgendaAction}>
+                  {t(showAllSessions ? 'home.showSmartAgenda' : 'home.showAll')}
+                </Text>
+              </Pressable>
+            </View>
+            {bookmarkQuery.error || toggleBookmarkMutation.error ? (
+              <Text style={styles.bookmarkSyncError}>{t('home.bookmarkSyncError')}</Text>
+            ) : null}
 
             <View style={styles.viewModeContainer}>
               <View style={styles.viewModeRow}>
@@ -518,7 +597,14 @@ export default function HomeScreen() {
 
                 <View style={styles.sessionCard}>
                   <View style={styles.sessionCardHeader}>
-                    <View style={{ flex: 1 }} />
+                    {profileMatchedSessionIds.has(s.id) && !bookmarked ? (
+                      <View style={styles.recommendedBadge}>
+                        <Sparkles size={11} color={colors.primary} />
+                        <Text style={styles.recommendedBadgeText}>{t('home.recommendedForYou')}</Text>
+                      </View>
+                    ) : (
+                      <View style={{ flex: 1 }} />
+                    )}
                     <Pressable
                       style={[styles.bookmarkBtn, bookmarked && styles.bookmarkBtnActive]}
                       onPress={() => toggleBookmark(s.id)}
@@ -787,6 +873,19 @@ const styles = StyleSheet.create({
   dayNameSelected: { color: 'rgba(255,255,255,0.85)' },
   dayNum: { fontSize: 18, fontWeight: '800', color: colors.text, marginTop: 2 },
   dayNumSelected: { color: colors.white },
+  smartAgendaCard: {
+    backgroundColor: colors.primarySoft,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+    padding: 14,
+    gap: 7,
+  },
+  smartAgendaTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  smartAgendaTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  smartAgendaHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16 },
+  smartAgendaAction: { color: colors.primary, fontSize: 12, fontWeight: '800', marginTop: 2 },
+  bookmarkSyncError: { color: colors.danger, fontSize: 12, fontWeight: '600' },
   searchRow: { flexDirection: 'row', gap: 8 },
   searchBox: {
     flex: 1,
@@ -837,6 +936,17 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   sessionCardHeader: { flexDirection: 'row', alignItems: 'center' },
+  recommendedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginRight: 'auto',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: colors.primarySoft,
+  },
+  recommendedBadgeText: { color: colors.primary, fontSize: 10, fontWeight: '800' },
   bookmarkBtn: {
     width: 32,
     height: 32,

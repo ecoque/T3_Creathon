@@ -718,10 +718,14 @@ export function AdminWorkspace() {
       <AttendeeEditorModal
         visible={attendeeEditor !== null}
         attendee={attendeeEditor === 'new' ? null : attendeeEditor}
+        saveError={store.error}
         onClose={() => setAttendeeEditor(null)}
+        onClearError={store.clearError}
         onSave={async (data, id) => {
-          if (await store.saveAttendee(data, id))
+          const saved = await store.saveAttendee(data, id);
+          if (saved)
             notify(id ? 'Katılımcı güncellendi.' : 'Yeni katılımcı eklendi.');
+          return saved;
         }}
         onDelete={(id) =>
           askDelete('attendee', id, store.attendees.find((x) => x.id === id)?.name || 'Katılımcı')

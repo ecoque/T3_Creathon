@@ -5,7 +5,11 @@ import { useCurrentProfile } from './useCurrentProfile';
 import type { Profile } from '../types';
 
 async function fetchOtherProfiles(myUserId: string): Promise<Profile[]> {
-  const { data, error } = await supabase.from('profiles').select('*').neq('user_id', myUserId);
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('status', 'active')
+    .neq('user_id', myUserId);
   if (error) throw error;
   return (data ?? []) as Profile[];
 }

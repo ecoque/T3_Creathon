@@ -36,10 +36,20 @@ const schemaHint =
 function databaseError(error: { message?: string; code?: string } | null, context: string) {
   if (!error) return null;
   const message = error.message || 'Bilinmeyen veritabanı hatası';
+  if (error.code === '23514' && message.includes('profiles_entrepreneur_identity_required')) {
+    return new Error(
+      'Aktif girişimci profili için unvan ve şirket zorunludur. Bu iki alanı doldurun veya hesabı pasif duruma alın.',
+    );
+  }
+  if (error.code === '23514' && message.includes('profiles_investment_thesis_required')) {
+    return new Error(
+      'Aktif yatırımcı profili için yatırım tezi zorunludur. Kullanıcı profilinden yatırım tezini tamamlayın veya hesabı pasif duruma alın.',
+    );
+  }
   if (error.code === '42P01' || error.code === '42703' || /does not exist|schema cache/i.test(message)) {
     return new Error(schemaHint);
   }
-  return new Error(`${context}: ${message}`);
+  return new Error(`${context}. Bilgileri kontrol edip yeniden deneyin.`);
 }
 
 function ensure(result: { error: any }, context: string) {
@@ -519,16 +529,25 @@ export const adminRepository = {
     if (current && data.email && data.email.trim().toLowerCase() !== current.email.trim().toLowerCase()) {
       throw new Error('Giriş e-postası bu panelden değiştirilemez. E-postayı Supabase Authentication üzerinden güncelleyin.');
     }
+    const role = data.role || 'Ziyaretçi';
+    const status = data.status || 'active';
+    const title = data.title?.trim() || '';
+    const company = data.company?.trim() || '';
+    if (role === 'Girişimci' && status === 'active' && (!title || !company)) {
+      throw new Error(
+        'Aktif girişimci profili için unvan ve şirket zorunludur. Bu iki alanı doldurun veya hesabı pasif duruma alın.',
+      );
+    }
     const payload = {
       full_name: data.name || `${data.firstName || ''} ${data.lastName || ''}`.trim(),
-      title: data.title || null,
+      title: title || null,
       position: data.position || null,
-      company: data.company || null,
-      role: databaseRole[data.role || 'Ziyaretçi'],
+      company: company || null,
+      role: databaseRole[role],
       sector: data.sector || null,
       interests: data.interests || [],
       linkedin_url: data.linkedin || null,
-      status: data.status || 'active',
+      status,
       updated_at: new Date().toISOString(),
     };
     const result = await supabase.from('profiles').update(payload).eq('id', editingId);
@@ -544,7 +563,7 @@ export const adminRepository = {
       },
       { onConflict: 'profile_id' },
     );
-    ensure(privateResult, 'Özel katılımcı bilgileri kaydedilemedi');
+    ensure(privateResult, 'Profil güncellendi ancak özel katılımcı bilgileri kaydedilemedi');
     await writeLog('Katılımcı profili güncellendi', payload.full_name, 'system');
   },
 

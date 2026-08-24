@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { supabase } from './supabase';
+import { useCurrentProfile } from './useCurrentProfile';
 import type { MeetingRequest, Profile } from '../types';
 
 export type MeetingRequestItem = MeetingRequest & {
@@ -8,24 +9,18 @@ export type MeetingRequestItem = MeetingRequest & {
   otherProfile: Profile | null;
 };
 
-async function fetchMeetingRequests(): Promise<{ userId: string; items: MeetingRequestItem[] }> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) return { userId: '', items: [] };
-
+async function fetchMeetingRequests(userId: string): Promise<{ userId: string; items: MeetingRequestItem[] }> {
   const { data: requests, error } = await supabase
     .from('meeting_requests')
     .select('*')
-    .or(`from_user_id.eq.${user.id},to_user_id.eq.${user.id}`)
+    .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
     .order('created_at', { ascending: false });
 
   if (error) throw error;
 
   const rows = (requests ?? []) as MeetingRequest[];
   const otherIds = Array.from(
-    new Set(rows.map((r) => (r.from_user_id === user.id ? r.to_user_id : r.from_user_id))),
+    new Set(rows.map((r) => (r.from_user_id === userId ? r.to_user_id : r.from_user_id))),
   );
 
   let profilesById = new Map<string, Profile>();
@@ -39,18 +34,20 @@ async function fetchMeetingRequests(): Promise<{ userId: string; items: MeetingR
   }
 
   const items: MeetingRequestItem[] = rows.map((r) => {
-    const direction = r.from_user_id === user.id ? 'outgoing' : 'incoming';
+    const direction = r.from_user_id === userId ? 'outgoing' : 'incoming';
     const otherId = direction === 'outgoing' ? r.to_user_id : r.from_user_id;
     return { ...r, direction, otherProfile: profilesById.get(otherId) ?? null };
   });
 
-  return { userId: user.id, items };
+  return { userId, items };
 }
 
 export function useMeetingRequests() {
+  const { data: meResult } = useCurrentProfile();
   return useQuery({
-    queryKey: ['meeting_requests'],
-    queryFn: fetchMeetingRequests,
+    queryKey: ['meeting_requests', meResult?.userId],
+    queryFn: () => fetchMeetingRequests(meResult!.userId),
+    enabled: !!meResult?.userId,
     staleTime: 15_000,
   });
 }

@@ -2,36 +2,67 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { supabase } from './supabase';
+import { useCurrentProfile } from './useCurrentProfile';
 
-function storageKeyFor(userId: string) {
+function legacyStorageKey(userId: string) {
   return `takeoff:session_bookmarks:${userId}`;
 }
 
-async function fetchBookmarkedSessionIds(): Promise<Set<string>> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return new Set();
-
-  const raw = await AsyncStorage.getItem(storageKeyFor(user.id));
-  if (!raw) return new Set();
-
-  try {
-    return new Set(JSON.parse(raw) as string[]);
-  } catch {
-    return new Set();
-  }
+function legacyProcessedKey(userId: string) {
+  return `takeoff:session_bookmarks:migrated:${userId}`;
 }
 
-// "Ajandam" işaretlemesi cihazda (AsyncStorage) kalıcı olarak saklanır; uygulama
-// kapanıp açılsa bile kaybolmaz. Supabase'de ek bir tablo/migration gerektirmez —
-// bunun bedeli, işaretin sadece bu cihaza özel olması (başka bir cihazda aynı
-// hesapla girildiğinde görünmez).
+async function importLegacyDeviceBookmarks(userId: string, serverIds: Set<string>) {
+  const [raw, processedRaw] = await Promise.all([
+    AsyncStorage.getItem(legacyStorageKey(userId)),
+    AsyncStorage.getItem(legacyProcessedKey(userId)),
+  ]);
+  if (!raw) return serverIds;
+
+  let legacyIds: string[] = [];
+  let processedIds = new Set<string>();
+  try {
+    legacyIds = JSON.parse(raw) as string[];
+    processedIds = new Set(processedRaw ? (JSON.parse(processedRaw) as string[]) : []);
+  } catch {
+    return serverIds;
+  }
+
+  const next = new Set(serverIds);
+  legacyIds.filter((id) => next.has(id)).forEach((id) => processedIds.add(id));
+
+  for (const sessionId of legacyIds.filter((id) => !next.has(id) && !processedIds.has(id))) {
+    const { error } = await supabase.from('session_bookmarks').insert({ user_id: userId, session_id: sessionId });
+    // Eski cihaz verisinin bir kısmı artık geçersiz veya yeni toplantılarla
+    // çakışıyor olabilir. Geçerli seçimleri taşırken böyle satırları atlarız.
+    if (!error) {
+      next.add(sessionId);
+      processedIds.add(sessionId);
+    }
+  }
+  await AsyncStorage.setItem(legacyProcessedKey(userId), JSON.stringify(Array.from(processedIds)));
+  return next;
+}
+
+async function fetchBookmarkedSessionIds(userId: string): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('session_bookmarks')
+    .select('session_id')
+    .eq('user_id', userId);
+  if (error) throw error;
+  const serverIds = new Set((data ?? []).map((row) => row.session_id as string));
+  return importLegacyDeviceBookmarks(userId, serverIds);
+}
+
+// Yeni seçimlerin tek gerçek kaynağı Supabase'dir. Önceki sürümde cihazda
+// kalmış seçimler ilk yüklemede kayıp olmadan hesaba aktarılır.
 export function useSessionBookmarks() {
+  const { data: meResult } = useCurrentProfile();
   return useQuery({
-    queryKey: ['session_bookmarks'],
-    queryFn: fetchBookmarkedSessionIds,
-    staleTime: Infinity,
+    queryKey: ['session_bookmarks', meResult?.userId],
+    queryFn: () => fetchBookmarkedSessionIds(meResult!.userId),
+    enabled: !!meResult?.userId,
+    staleTime: 30_000,
   });
 }
 
@@ -39,29 +70,30 @@ type ToggleArgs = { sessionId: string; bookmarked: boolean };
 
 export function useToggleSessionBookmark() {
   const queryClient = useQueryClient();
+  const { data: meResult } = useCurrentProfile();
+  const queryKey = ['session_bookmarks', meResult?.userId] as const;
 
   return useMutation({
     mutationFn: async ({ sessionId, bookmarked }: ToggleArgs) => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error('Oturum bulunamadı.');
+      const userId = meResult?.userId;
+      if (!userId) throw new Error('Oturum bulunamadı.');
 
-      const current = queryClient.getQueryData<Set<string>>(['session_bookmarks']) ?? new Set<string>();
-      const next = new Set(current);
-      if (bookmarked) next.delete(sessionId);
-      else next.add(sessionId);
-
-      await AsyncStorage.setItem(storageKeyFor(user.id), JSON.stringify(Array.from(next)));
-      return next;
+      const result = bookmarked
+        ? await supabase
+            .from('session_bookmarks')
+            .delete()
+            .eq('user_id', userId)
+            .eq('session_id', sessionId)
+        : await supabase.from('session_bookmarks').insert({ user_id: userId, session_id: sessionId });
+      if (result.error) throw result.error;
     },
-    // Diske yazma tamamlanmadan arayüz anında güncellensin (optimistic update);
-    // yazma başarısız olursa (çok nadir, disk dolu vb.) önceki duruma geri alınır.
+    // Sunucu yanıtı beklenirken arayüz anında güncellenir; kayıt başarısızsa
+    // önceki hesap verisine geri dönülür.
     onMutate: async ({ sessionId, bookmarked }: ToggleArgs) => {
-      await queryClient.cancelQueries({ queryKey: ['session_bookmarks'] });
-      const previous = queryClient.getQueryData<Set<string>>(['session_bookmarks']);
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<Set<string>>(queryKey);
 
-      queryClient.setQueryData<Set<string>>(['session_bookmarks'], (prev) => {
+      queryClient.setQueryData<Set<string>>(queryKey, (prev) => {
         const next = new Set(prev ?? []);
         if (bookmarked) next.delete(sessionId);
         else next.add(sessionId);
@@ -71,12 +103,11 @@ export function useToggleSessionBookmark() {
       return { previous };
     },
     onError: (_err, _vars, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(['session_bookmarks'], context.previous);
-      }
+      queryClient.setQueryData(queryKey, context?.previous ?? new Set<string>());
+      queryClient.invalidateQueries({ queryKey });
     },
-    onSuccess: (next) => {
-      queryClient.setQueryData(['session_bookmarks'], next);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
     },
   });
 }

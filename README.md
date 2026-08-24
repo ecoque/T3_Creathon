@@ -46,6 +46,39 @@ cp .env.example .env
 # .env içine kendi Supabase URL ve anon key değerlerinizi girin
 ```
 
+## Supabase migration sırası
+
+Migration dosyalarını Supabase Dashboard > SQL Editor içinde aşağıdaki sırayla çalıştırın:
+
+1. `supabase_schema.sql` — boş bir projede temel kullanıcı, profil, program, toplantı ve
+   etkinlik tablolarını oluşturur. Yalnız ilk kurulum içindir; tekrar çalıştırılabilir değildir.
+2. `supabase_admin_migration.sql` — temel admin yetkilerini ve RLS kurallarını güvenli hale
+   getirir. Yeniden çalıştırılabilir.
+3. `supabase_admin_workspace_migration.sql` — admin panelinin oturum, alan, stand, duyuru,
+   katılımcı ve ayar tablolarını/alanlarını ekler. Yeniden çalıştırılabilir.
+4. `supabase_investor_core_flow_migration.sql` — zorunlu yatırım tezi, yatırım odakları ve
+   yatırımcı kısa listesini RLS ile ekler. `NOT VALID` kontroller sayesinde eski kayıtları
+   değiştirmez; mevcut aktif yatırımcı bir sonraki profil güncellemesinde tezini tamamlar.
+   Yeniden çalıştırılabilir.
+5. `supabase_entrepreneur_core_flow_migration.sql` — girişimci kimliği, özel görüşme notları,
+   hesapla senkron ajanda ve çakışmasız toplantı uygunluğunu ekler. Ortak güvenlik yardımcı
+   fonksiyonlarının güncel sürümünü içerdiği için **en son çalıştırılmalıdır** ve yeniden
+   çalıştırılabilir. Bundan sonra yatırımcı migration'ını tek başına yeniden çalıştırmayın.
+
+Daha önce yatırımcı ve girişimci migration'larını çalıştırmış bir projeye yeni yatırım tezi
+zorunluluğunu eklerken önce güncel `supabase_investor_core_flow_migration.sql`, hemen ardından
+`supabase_entrepreneur_core_flow_migration.sql` dosyasını yeniden çalıştırın. Böylece yatırımcı
+kısıtı eklenirken ortak yardımcı fonksiyonların en güncel sürümü yine en son uygulanmış olur.
+
+`supabase_location_pings_delete_migration.sql`, kullanıcıya yalnız kendi konum kayıtlarını
+silme izni veren bağımsız ve tek seferlik bir migration'dır. Politika zaten varsa yeniden
+çalıştırmak hata verir.
+
+Bu migration'lar çalıştırıldıkları anda uygulama kayıtlarını silmez, seed etmez veya mevcut
+satırları yeniden yazmaz. Dosyalardaki `DROP POLICY` ifadeleri yalnız yetkilendirme kurallarını
+güvenli sürümleriyle değiştirmek içindir. Yine de canlı projede çalıştırmadan önce güncel bir
+veritabanı yedeği almak önerilir.
+
 ### Geliştirme sunucusunu başlatma
 
 ```bash

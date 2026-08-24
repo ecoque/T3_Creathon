@@ -104,8 +104,15 @@ export default function OnboardingProfileScreen() {
       router.replace('/onboarding');
       return;
     }
-    if (!fullName.trim() || !selectedSector || interests.length < 2 || goals.length < 1) {
-      setError(t(role === 'yatirimci' ? 'investor.onboardingValidation' : 'onboarding.profileValidation'));
+    if (
+      !fullName.trim()
+      || !selectedSector
+      || interests.length < 2
+      || goals.length < 1
+      || (role === 'girisimci' && (!title.trim() || !company.trim()))
+      || (role === 'yatirimci' && !investmentThesis.trim())
+    ) {
+      setError(t(role === 'yatirimci' ? 'investor.onboardingValidation' : role === 'girisimci' ? 'entrepreneur.onboardingValidation' : 'onboarding.profileValidation'));
       return;
     }
     if (role === 'yatirimci' && (investmentFocuses.length < 1 || investorSchemaReady !== true)) {
@@ -139,7 +146,7 @@ export default function OnboardingProfileScreen() {
         ...(role === 'yatirimci'
           ? {
               investment_focuses: investmentFocuses,
-              investment_thesis: investmentThesis.trim() || null,
+              investment_thesis: investmentThesis.trim(),
             }
           : {}),
       };
@@ -148,7 +155,7 @@ export default function OnboardingProfileScreen() {
       profilePayload,
       { onConflict: 'user_id' },
     );
-    if (saveError && role !== 'yatirimci' && isInvestorSchemaMissing(saveError)) {
+    if (saveError && !['yatirimci', 'girisimci'].includes(role) && isInvestorSchemaMissing(saveError)) {
       const legacyResult = await supabase.from('profiles').upsert(
         {
           user_id: user.id,
@@ -164,7 +171,7 @@ export default function OnboardingProfileScreen() {
     }
     setLoading(false);
     if (saveError) {
-      setError(isInvestorSchemaMissing(saveError) ? t('investor.migrationRequired') : saveError.message);
+      setError(isInvestorSchemaMissing(saveError) ? t(role === 'girisimci' ? 'entrepreneur.migrationRequired' : 'investor.migrationRequired') : saveError.message);
       return;
     }
 
@@ -188,16 +195,16 @@ export default function OnboardingProfileScreen() {
           <View style={styles.stepRow}><View style={styles.stepDone} /><View style={styles.stepActive} /></View>
         </View>
         <Text style={styles.eyebrow}>{t('onboarding.lastStep')}</Text>
-        <Text style={styles.title}>{t(role === 'yatirimci' ? 'investor.onboardingTitle' : 'onboarding.profileTitle')}</Text>
-        <Text style={styles.subtitle}>{t(role === 'yatirimci' ? 'investor.onboardingSubtitle' : 'onboarding.profileSubtitle')}</Text>
+        <Text style={styles.title}>{t(role === 'yatirimci' ? 'investor.onboardingTitle' : role === 'girisimci' ? 'entrepreneur.onboardingTitle' : 'onboarding.profileTitle')}</Text>
+        <Text style={styles.subtitle}>{t(role === 'yatirimci' ? 'investor.onboardingSubtitle' : role === 'girisimci' ? 'entrepreneur.onboardingSubtitle' : 'onboarding.profileSubtitle')}</Text>
 
         <View style={styles.card}>
           <Text style={styles.label}>{t('onboarding.fullNameLabel')}</Text>
           <TextInput style={styles.input} placeholder={t('onboarding.fullNamePlaceholder')} placeholderTextColor={colors.textFaint} value={fullName} onChangeText={setFullName} autoComplete="name" textContentType="name" />
-          <Text style={styles.label}>{t(role === 'yatirimci' ? 'investor.titleLabel' : 'onboarding.titleLabel')}</Text>
-          <TextInput style={styles.input} placeholder={t(role === 'yatirimci' ? 'investor.titlePlaceholder' : 'onboarding.titlePlaceholder')} placeholderTextColor={colors.textFaint} value={title} onChangeText={setTitle} />
-          <Text style={styles.label}>{role === 'girisimci' ? t('onboarding.founderCompanyLabel') : role === 'yatirimci' ? t('investor.fundLabel') : t('onboarding.companyLabel')}</Text>
-          <TextInput style={styles.input} placeholder={role === 'girisimci' ? t('onboarding.founderCompanyPlaceholder') : role === 'yatirimci' ? t('investor.fundPlaceholder') : t('onboarding.companyPlaceholder')} placeholderTextColor={colors.textFaint} value={company} onChangeText={setCompany} autoComplete="organization" textContentType="organizationName" />
+          <Text style={styles.label}>{t(role === 'yatirimci' ? 'investor.titleLabel' : role === 'girisimci' ? 'entrepreneur.titleLabel' : 'onboarding.titleLabel')}</Text>
+          <TextInput style={styles.input} placeholder={t(role === 'yatirimci' ? 'investor.titlePlaceholder' : role === 'girisimci' ? 'entrepreneur.titlePlaceholder' : 'onboarding.titlePlaceholder')} placeholderTextColor={colors.textFaint} value={title} onChangeText={setTitle} />
+          <Text style={styles.label}>{role === 'girisimci' ? t('entrepreneur.companyLabel') : role === 'yatirimci' ? t('investor.fundLabel') : t('onboarding.companyLabel')}</Text>
+          <TextInput style={styles.input} placeholder={role === 'girisimci' ? t('entrepreneur.companyPlaceholder') : role === 'yatirimci' ? t('investor.fundPlaceholder') : t('onboarding.companyPlaceholder')} placeholderTextColor={colors.textFaint} value={company} onChangeText={setCompany} autoComplete="organization" textContentType="organizationName" />
         </View>
 
         <View style={styles.card}>
