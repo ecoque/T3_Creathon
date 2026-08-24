@@ -470,6 +470,9 @@ export const initialZones: ZoneDensityInfo[] = [
     avgAttendees: 890,
     description: 'Ana Sahne, Protokol Girişi ve VIP Yatırımcı Locası alanını kapsar.',
     color: '#3b82f6',
+    centerLat: null,
+    centerLng: null,
+    radiusMeters: 60,
   },
   {
     id: 'zone-b',
@@ -483,6 +486,9 @@ export const initialZones: ZoneDensityInfo[] = [
     avgAttendees: 480,
     description: 'AI Sahnesi, Hands-on Lab C ve Derin Teknoloji Stantları.',
     color: '#c85000',
+    centerLat: null,
+    centerLng: null,
+    radiusMeters: 60,
   },
   {
     id: 'zone-c',
@@ -496,6 +502,9 @@ export const initialZones: ZoneDensityInfo[] = [
     avgAttendees: 370,
     description: '100+ Erken Aşama Girişim Stantları ve Pitch Sahnesi.',
     color: '#10b981',
+    centerLat: null,
+    centerLng: null,
+    radiusMeters: 60,
   },
   {
     id: 'zone-d',
@@ -509,6 +518,9 @@ export const initialZones: ZoneDensityInfo[] = [
     avgAttendees: 600,
     description: 'B2B Toplantı Masaları, Kahve İkram Alanı ve Açık Teras.',
     color: '#8b5cf6',
+    centerLat: null,
+    centerLng: null,
+    radiusMeters: 60,
   },
 ];
 

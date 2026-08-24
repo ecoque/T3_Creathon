@@ -8,7 +8,6 @@ import { AppHeader } from '../../components/AppHeader';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { SessionDetailModal } from '../../components/modals/SessionDetailModal';
 import { colors } from '../../constants/theme';
-import { venuePoints } from '../../constants/venuePoints';
 import { rankSessionsForProfile } from '../agenda/sessionRecommendations';
 import { useEventSessions } from '../agenda/useEventSessions';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
@@ -103,16 +102,8 @@ export function VisitorEventsScreen() {
   }
 
   function showOnMap(session: Session) {
-    const location = session.location;
-    const found = location
-      ? venuePoints.find(
-          (point) =>
-            point.name.toLocaleLowerCase('tr-TR').includes(location.toLocaleLowerCase('tr-TR'))
-            || location.toLocaleLowerCase('tr-TR').includes(point.name.toLocaleLowerCase('tr-TR')),
-        )
-      : null;
     setSelectedSession(null);
-    router.push({ pathname: '/(tabs)/map', params: found ? { locationId: found.id } : {} });
+    router.push({ pathname: '/(tabs)/map', params: session.location ? { locationName: session.location } : {} });
   }
 
   return (
