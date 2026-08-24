@@ -10,6 +10,7 @@ import { TakeOffLogo } from '../../components/TakeOffLogo';
 import { colors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { getProfileForUser } from '../../lib/useCurrentProfile';
+import { checkIsAdmin } from '../../lib/useIsAdmin';
 
 export default function AuthScreen() {
   const { t } = useTranslation();
@@ -32,6 +33,11 @@ export default function AuthScreen() {
 
     try {
       queryClient.removeQueries({ queryKey: ['me', 'profile'] });
+      const isAdmin = await checkIsAdmin(data.user.id);
+      if (isAdmin) {
+        router.replace('/admin');
+        return;
+      }
       const profile = await getProfileForUser(data.user.id);
       router.replace(profile ? '/(tabs)/home' : '/onboarding');
     } catch (profileError) {

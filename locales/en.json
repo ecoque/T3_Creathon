@@ -180,6 +180,10 @@
     "toggleLabel": "Share my location during the event"
   },
   "admin": {
-    "title": "Admin Panel"
+    "title": "Admin Panel",
+    "subtitle": "This area is for event admins only.",
+    "previewTitle": "Preview participant view",
+    "previewDescription": "Browse the app as a regular participant would see it. Use your device's back button to return.",
+    "comingSoon": "Adding/editing booths is coming soon."
   }
 }
