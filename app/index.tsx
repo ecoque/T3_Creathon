@@ -2,9 +2,9 @@ import { Redirect } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
+import { isAdminUser } from '../lib/adminAccess';
 import { supabase } from '../lib/supabase';
 import { getProfileForUser } from '../lib/useCurrentProfile';
-import { isAdminUser } from '../lib/adminAccess';
 
 export default function Index() {
   const [destination, setDestination] = useState<
@@ -26,6 +26,7 @@ export default function Index() {
       }
 
       const admin = await isAdminUser(session.user.id);
+      if (!active) return;
       if (admin) {
         setDestination('/admin');
         return;

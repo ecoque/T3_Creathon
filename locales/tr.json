@@ -452,6 +452,10 @@
     "toggleLabel": "Etkinlik boyunca konumumu paylaş"
   },
   "admin": {
-    "title": "Admin Paneli"
+    "title": "Admin Paneli",
+    "subtitle": "Bu alan sadece etkinlik yöneticileri içindir.",
+    "previewTitle": "Katılımcı görünümünü önizle",
+    "previewDescription": "Uygulamayı normal bir katılımcının gördüğü gibi gez. Geri dönmek için cihazının geri tuşunu kullan.",
+    "comingSoon": "Stant ekleme/düzenleme yakında burada olacak."
   }
 }

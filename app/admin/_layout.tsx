@@ -6,6 +6,7 @@ import { colors } from '../../constants/theme';
 import { isAdminUser } from '../../lib/adminAccess';
 import { supabase } from '../../lib/supabase';
 
+// Bu route grubu, 4 katılımcı rolünden ayrı olarak users.is_admin flag'i ile korunur.
 export default function AdminLayout() {
   const [state, setState] = useState<'checking' | 'allowed' | 'signed-out' | 'denied' | 'error'>(
     'checking',
@@ -26,7 +27,9 @@ export default function AdminLayout() {
       }
 
       const allowed = await isAdminUser(session.user.id);
-      if (active) setState(allowed ? 'allowed' : 'denied');
+      if (active) {
+        setState(allowed ? 'allowed' : 'denied');
+      }
     }
 
     verifyAccess().catch(() => {
