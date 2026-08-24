@@ -31,6 +31,7 @@ import {
 } from 'react-native';
 
 import { colors } from '../../constants/theme';
+import { isBoothPlaced } from '../../lib/boothGrid';
 import type { AdminBooth, AdminSession, AdminStage, ZoneDensityInfo } from '../../types/admin';
 
 export type VenueTab = 'booths' | 'stages' | 'zones';
@@ -49,6 +50,7 @@ type AdminVenuesAndStandsProps = {
   onOpenEditStage: (stage: AdminStage) => void;
   onDeleteStage: (stage: AdminStage) => void;
   onNavigateToMap: (booth?: AdminBooth) => void;
+  onNavigateToStageMap: (stage: AdminStage) => void;
 };
 
 type FilterOption = { value: string; label: string };
@@ -262,6 +264,7 @@ export function AdminVenuesAndStands({
   onOpenEditStage,
   onDeleteStage,
   onNavigateToMap,
+  onNavigateToStageMap,
 }: AdminVenuesAndStandsProps) {
   const { width } = useWindowDimensions();
   const compact = width < 720;
@@ -470,7 +473,7 @@ export function AdminVenuesAndStands({
                     <View style={styles.boothIdentity}>
                       <BoothLogo booth={booth} />
                       <View style={styles.flex}>
-                        <Text style={styles.boothNo}>{booth.boothNo}</Text>
+                        <Text style={styles.boothNo}>{booth.boothNo || 'Yerleştirilmedi'}</Text>
                         <Text style={styles.cardTitle} numberOfLines={2}>
                           {booth.companyName}
                         </Text>
@@ -493,7 +496,9 @@ export function AdminVenuesAndStands({
                     </View>
                     <View style={styles.metaItem}>
                       <MapPin size={13} color={colors.primary} />
-                      <Text style={styles.metaText}>{booth.zone}</Text>
+                      <Text style={styles.metaText}>
+                        {isBoothPlaced(booth) ? booth.zone : 'Krokide yok'}
+                      </Text>
                     </View>
                     <View style={[styles.tierBadge, tierStyle(booth.sponsorTier)]}>
                       <Text style={styles.tierText}>{booth.sponsorTier}</Text>
@@ -523,15 +528,17 @@ export function AdminVenuesAndStands({
 
                   <View style={styles.cardFooter}>
                     <View>
-                      <Text style={styles.coordinateLabel}>HARİTA KONUMU</Text>
+                      <Text style={styles.coordinateLabel}>KROKİ KONUMU</Text>
                       <Text style={styles.coordinate}>
-                        X %{booth.mapX} · Y %{booth.mapY}
+                        {isBoothPlaced(booth)
+                          ? `${booth.zone} · X %${booth.mapX} · Y %${booth.mapY}`
+                          : 'Henüz yerleştirilmedi'}
                       </Text>
                     </View>
                     <View style={styles.cardActions}>
                       <ActionButton
                         icon={Crosshair}
-                        label="Haritada konumlandır"
+                        label="Krokide konumlandır"
                         onPress={() => onNavigateToMap(booth)}
                       />
                       <ActionButton
@@ -663,12 +670,17 @@ export function AdminVenuesAndStands({
 
                     <View style={styles.cardFooter}>
                       <View>
-                        <Text style={styles.coordinateLabel}>HARİTA KONUMU</Text>
+                        <Text style={styles.coordinateLabel}>KROKİ KONUMU</Text>
                         <Text style={styles.coordinate}>
-                          X %{stage.mapX} · Y %{stage.mapY}
+                          {stage.zone} · X %{stage.mapX} · Y %{stage.mapY}
                         </Text>
                       </View>
                       <View style={styles.cardActions}>
+                        <ActionButton
+                          icon={Crosshair}
+                          label="Krokide konumlandır"
+                          onPress={() => onNavigateToStageMap(stage)}
+                        />
                         <ActionButton
                           icon={Edit3}
                           label="Alanı düzenle"
@@ -711,7 +723,9 @@ export function AdminVenuesAndStands({
           <View style={styles.grid}>
             {zones.map((zone) => {
               const zoneStages = stages.filter((stage) => stage.zone === zone.code).length;
-              const zoneBooths = booths.filter((booth) => booth.zone === zone.code).length;
+              const zoneBooths = booths.filter(
+                (booth) => booth.zone === zone.code && isBoothPlaced(booth),
+              ).length;
               const density = densityStyle(zone.densityLevel);
               return (
                 <View key={zone.id} style={[styles.zoneCard, twoColumn && styles.halfCard]}>

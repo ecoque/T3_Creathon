@@ -161,6 +161,7 @@ export function AdminWorkspace() {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [selectedBoothId, setSelectedBoothId] = useState(store.booths[0]?.id || null);
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
 
   useEffect(
     () => () => {
@@ -287,6 +288,10 @@ export function AdminWorkspace() {
           if (booth) setSelectedBoothId(booth.id);
           navigate('map_management');
         }}
+        onNavigateToStageMap={(stage) => {
+          setSelectedStageId(stage.id);
+          navigate('map_management');
+        }}
       />
     );
   }
@@ -297,11 +302,13 @@ export function AdminWorkspace() {
         stages={store.stages}
         booths={store.booths}
         zones={store.zones}
+        settings={store.settings}
         selectedBoothIdFromNav={selectedBoothId}
+        selectedStageIdFromNav={selectedStageId}
         onSelectBooth={setSelectedBoothId}
+        onSelectStage={setSelectedStageId}
         onOpenEditBooth={setBoothEditor}
         onDeleteBooth={(booth) => askDelete('booth', booth.id, booth.companyName)}
-        onUpdateBoothCoordinates={store.updateBoothCoordinates}
         onNotify={notify}
       />
     );

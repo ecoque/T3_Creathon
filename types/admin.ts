@@ -97,10 +97,12 @@ export interface AdminBooth {
     | 'Yatırım / VC';
   description: string;
   logo: string;
-  zone: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D';
+  // null ise stant henüz krokiye (etkinlik alanı yerleşim planı) yerleştirilmemiş
+  // demektir — bkz. lib/boothGrid.ts > isBoothPlaced.
+  zone: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | null;
   sponsorTier: 'Platinum' | 'Gold' | 'Silver' | 'Startup' | 'Partner';
-  mapX: number; // 0-100%
-  mapY: number; // 0-100%
+  mapX: number; // 0-100% — krokideki serbest konum (admin tarafından dokunularak atanır)
+  mapY: number; // 0-100% — krokideki serbest konum (admin tarafından dokunularak atanır)
   status: 'active' | 'passive' | 'reserved';
   contactPerson: string;
   contactEmail: string;
@@ -145,6 +147,12 @@ export interface ZoneDensityInfo {
   avgAttendees: number;
   description: string;
   color: string;
+  // Bölgenin gerçek dünyadaki konumu: merkez GPS noktası + metre cinsinden yarıçap.
+  // İkisi de null ise bölge henüz haritada tanımlanmamış demektir; bu durumda
+  // activeAttendees, location_pings'ten değil admin tarafından girilen sayıdan gelir.
+  centerLat: number | null;
+  centerLng: number | null;
+  radiusMeters: number;
 }
 
 export type AttendeeRole = 'Girişimci' | 'Yatırımcı' | 'Kurum / Partner' | 'Ziyaretçi';
@@ -205,7 +213,21 @@ export interface AdminLogItem {
   adminName: string;
   action: string;
   target: string;
-  type: 'session' | 'stage' | 'booth' | 'announcement' | 'system';
+  type: 'session' | 'stage' | 'booth' | 'zone' | 'announcement' | 'system';
+}
+
+// Admin'in krokiye elle çizdiği bir duvar çizgisi — iki uç nokta, krokideki
+// yüzde (0-100) koordinat sisteminde. Rota bulma algoritması (bkz.
+// lib/routePlanner.ts) bunları stant/sahne gibi birer engel sayıp
+// etraflarından dolanıyor. Her kroki fotoğrafı farklı olduğu için bu
+// çizgiler otomatik değil, admin tarafından krokiyi yükledikten sonra bir
+// kere elle işaretleniyor (bkz. AdminMapManagement.tsx > duvar çizme modu).
+export interface FloorPlanWall {
+  id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
 }
 
 export interface EventSettings {
@@ -214,6 +236,12 @@ export interface EventSettings {
   eventDates: string;
   venueName: string;
   venueAddress?: string;
+  // Admin tarafından yüklenen gerçek etkinlik alanı krokisi (fotoğraf/çizim).
+  // Harita Yönetimi ekranında arka plan olarak gösterilir. Henüz
+  // yüklenmediyse undefined — bu durumda soyut zone görünümü kullanılır.
+  floorPlanUrl?: string;
+  // Krokiye admin tarafından elle çizilmiş duvar çizgileri — bkz. FloorPlanWall.
+  floorPlanWalls: FloorPlanWall[];
   startDate?: string;
   endDate?: string;
   logoUrl?: string;

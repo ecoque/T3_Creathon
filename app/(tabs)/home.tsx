@@ -22,7 +22,6 @@ import { SessionDetailModal } from '../../components/modals/SessionDetailModal';
 import { WhyMatchModal } from '../../components/modals/WhyMatchModal';
 import { ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
-import { venuePoints } from '../../constants/venuePoints';
 import { rankMatches } from '../../features/matching/scoring';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useMeetingRequests } from '../../lib/useMeetingRequests';
@@ -37,11 +36,7 @@ import type { Profile, Session } from '../../types';
 const GAP_SUGGESTION_THRESHOLD_MS = 60 * 60 * 1000;
 
 async function fetchSessions(): Promise<Session[]> {
-  const { data, error } = await supabase
-    .from('sessions')
-    .select('*')
-    .in('status', ['published', 'live', 'delayed', 'completed'])
-    .order('start_time', { ascending: true });
+  const { data, error } = await supabase.from('sessions').select('*').order('start_time', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Session[];
 }
@@ -299,17 +294,14 @@ export default function HomeScreen() {
     toggleBookmarkMutation.mutate({ sessionId: id, bookmarked: bookmarks.has(id) });
   }
 
+  // Harita ekranı artık admin'in gerçek sahne/oturum yeri listesinde bu
+  // metne (session.location / stageName) en çok benzeyen sahneyi kendi
+  // tarafında bulup seçiyor (bkz. app/(tabs)/map.tsx > locationName param).
   function goToMap(locationText?: string | null) {
-    if (locationText) {
-      const found = venuePoints.find(
-        (p) =>
-          p.name.toLowerCase().includes(locationText.toLowerCase()) ||
-          locationText.toLowerCase().includes(p.name.toLowerCase()),
-      );
-      router.push({ pathname: '/(tabs)/map', params: found ? { locationId: found.id } : {} });
-      return;
-    }
-    router.push('/(tabs)/map');
+    router.push({
+      pathname: '/(tabs)/map',
+      params: locationText ? { locationName: locationText } : {},
+    });
   }
 
   const firstName = meResult?.profile?.full_name?.split(' ')[0] ?? '';

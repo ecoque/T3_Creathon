@@ -11,6 +11,7 @@ import type {
   AdminStage,
   EventSettings,
   SessionStatus,
+  ZoneDensityInfo,
 } from '../types/admin';
 import { adminRepository, type AdminWorkspaceData } from './adminRepository';
 
@@ -27,16 +28,22 @@ type AdminWorkspaceState = AdminWorkspaceData & {
   updateSessionStatus: (id: string, status: SessionStatus) => Promise<boolean>;
   saveStage: (data: Partial<AdminStage>, editingId?: string) => Promise<boolean>;
   deleteStage: (id: string) => Promise<boolean>;
+  updateStagePosition: (id: string, mapX: number, mapY: number) => Promise<boolean>;
+  saveZone: (data: Partial<ZoneDensityInfo>, editingId?: string) => Promise<boolean>;
+  deleteZone: (id: string) => Promise<boolean>;
   saveBooth: (data: Partial<AdminBooth>, editingId?: string) => Promise<boolean>;
   deleteBooth: (id: string) => Promise<boolean>;
   toggleBoothStatus: (id: string) => Promise<boolean>;
   updateBoothCoordinates: (id: string, x: number, y: number) => Promise<boolean>;
+  placeBooth: (boothId: string, mapX: number, mapY: number) => Promise<boolean>;
+  unplaceBooth: (boothId: string) => Promise<boolean>;
   saveAttendee: (data: Partial<AdminAttendee>, editingId?: string) => Promise<boolean>;
   deleteAttendee: (id: string) => Promise<boolean>;
   toggleAttendeeStatus: (id: string) => Promise<boolean>;
   publishAnnouncement: (data: Partial<AdminAnnouncement>, scheduled: boolean) => Promise<boolean>;
   deleteAnnouncement: (id: string) => Promise<boolean>;
   saveSettings: (data: Partial<EventSettings>) => Promise<boolean>;
+  uploadFloorPlan: (base64: string, mimeType?: string) => Promise<boolean>;
   resetDemoData: () => Promise<void>;
 };
 
@@ -136,6 +143,15 @@ export const useAdminStore = create<AdminWorkspaceState>((set, get) => {
         return adminRepository.saveStage({ ...current, ...data }, get().zones, editingId);
       }),
     deleteStage: (id) => mutate(() => adminRepository.deleteStage(id)),
+    updateStagePosition: (id, mapX, mapY) =>
+      mutate(() => adminRepository.updateStagePosition(id, mapX, mapY, get().zones)),
+
+    saveZone: (data, editingId) =>
+      mutate(() => {
+        const current = editingId ? get().zones.find((item) => item.id === editingId) : undefined;
+        return adminRepository.saveZone({ ...current, ...data }, editingId);
+      }),
+    deleteZone: (id) => mutate(() => adminRepository.deleteZone(id)),
 
     saveBooth: (data, editingId) =>
       mutate(async () => {
@@ -151,6 +167,9 @@ export const useAdminStore = create<AdminWorkspaceState>((set, get) => {
       }),
     updateBoothCoordinates: (id, x, y) =>
       mutate(() => adminRepository.updateBooth(id, { map_x: x, map_y: y })),
+    placeBooth: (boothId, mapX, mapY) =>
+      mutate(() => adminRepository.placeBooth(boothId, mapX, mapY, get().booths, get().zones)),
+    unplaceBooth: (boothId) => mutate(() => adminRepository.unplaceBooth(boothId, get().booths)),
 
     saveAttendee: (data, editingId) =>
       mutate(async () => {
@@ -172,6 +191,11 @@ export const useAdminStore = create<AdminWorkspaceState>((set, get) => {
     publishAnnouncement: (data, scheduled) => mutate(() => adminRepository.publishAnnouncement(data, scheduled)),
     deleteAnnouncement: (id) => mutate(() => adminRepository.deleteAnnouncement(id)),
     saveSettings: (data) => mutate(() => adminRepository.saveSettings({ ...get().settings, ...data })),
+    uploadFloorPlan: (base64, mimeType) =>
+      mutate(async () => {
+        const url = await adminRepository.uploadFloorPlanImage(base64, mimeType);
+        await adminRepository.saveSettings({ ...get().settings, floorPlanUrl: url });
+      }),
 
     resetDemoData: async () => {
       try {

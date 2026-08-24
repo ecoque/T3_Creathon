@@ -106,7 +106,7 @@ export const initialStages: AdminStage[] = [
 export const initialBooths: AdminBooth[] = [
   {
     id: 'booth-1',
-    boothNo: 'A-101',
+    boothNo: 'A101',
     companyName: 'FintechLabs Global',
     category: 'Fintech',
     description: 'Yapay zeka tabanlı açık bankacılık ve mikro-ödeme altyapısı sağlayıcısı.',
@@ -122,7 +122,7 @@ export const initialBooths: AdminBooth[] = [
   },
   {
     id: 'booth-2',
-    boothNo: 'A-102',
+    boothNo: 'A102',
     companyName: 'Cognitive AI Labs',
     category: 'Yapay Zeka',
     description: 'Kurumsal veri tabanları için otonom çoklu-ajan karar sistemleri.',
@@ -138,7 +138,7 @@ export const initialBooths: AdminBooth[] = [
   },
   {
     id: 'booth-3',
-    boothNo: 'B-201',
+    boothNo: 'B201',
     companyName: 'CloudSync Enterprise',
     category: 'SaaS',
     description: 'Çoklu-bulut veri transferi ve gerçek zamanlı felaket kurtarma platformu.',
@@ -154,7 +154,7 @@ export const initialBooths: AdminBooth[] = [
   },
   {
     id: 'booth-4',
-    boothNo: 'B-202',
+    boothNo: 'B202',
     companyName: 'MedPulse Diagnostics',
     category: 'Sağlık Teknolojileri',
     description: 'Yapay zeka destekli erken teşhis görüntüleme ve biyosensör donanımları.',
@@ -170,7 +170,7 @@ export const initialBooths: AdminBooth[] = [
   },
   {
     id: 'booth-5',
-    boothNo: 'C-301',
+    boothNo: 'C301',
     companyName: 'EcoGrid Dynamics',
     category: 'Sürdürülebilirlik',
     description: 'Endüstriyel tesisler için akıllı enerji tüketim optimizasyonu.',
@@ -186,7 +186,7 @@ export const initialBooths: AdminBooth[] = [
   },
   {
     id: 'booth-6',
-    boothNo: 'C-302',
+    boothNo: 'C302',
     companyName: 'RoboLogix Automation',
     category: 'Donanım & IoT',
     description: 'E-ticaret depoları için otonom yönlendirmeli taşıma robotları.',
@@ -202,7 +202,7 @@ export const initialBooths: AdminBooth[] = [
   },
   {
     id: 'booth-7',
-    boothNo: 'D-401',
+    boothNo: 'D401',
     companyName: 'VentureScale Capital',
     category: 'Yatırım / VC',
     description: 'Erken aşama B2B DeepTech ve SaaS girişimlerine 500K$-3M$ tohum fonu.',
@@ -956,6 +956,8 @@ export const initialEventSettings: any = {
   startDate: '2026-10-24',
   endDate: '2026-10-27',
   logoUrl: '/assets/takeoff-logo.svg',
+  // Admin krokiye elle çizdiği duvar çizgileri — bkz. types/admin.ts > FloorPlanWall.
+  floorPlanWalls: [],
   openingTime: '08:30',
   closingTime: '19:30',
   locationTrackingStart: '08:30',
