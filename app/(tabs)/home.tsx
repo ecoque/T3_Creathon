@@ -23,7 +23,6 @@ import { SessionDetailModal } from '../../components/modals/SessionDetailModal';
 import { WhyMatchModal } from '../../components/modals/WhyMatchModal';
 import { ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
-import { venuePoints } from '../../constants/venuePoints';
 import { rankSessionsForProfile } from '../../features/agenda/sessionRecommendations';
 import { useEventSessions } from '../../features/agenda/useEventSessions';
 import { VisitorEventsScreen } from '../../features/visitor/VisitorEventsScreen';
@@ -366,17 +365,14 @@ function ParticipantHomeScreen() {
     );
   }
 
+  // Harita ekranı artık admin'in gerçek sahne/oturum yeri listesinde bu
+  // metne (session.location / stageName) en çok benzeyen sahneyi kendi
+  // tarafında bulup seçiyor (bkz. app/(tabs)/map.tsx > locationName param).
   function goToMap(locationText?: string | null) {
-    if (locationText) {
-      const found = venuePoints.find(
-        (p) =>
-          p.name.toLowerCase().includes(locationText.toLowerCase()) ||
-          locationText.toLowerCase().includes(p.name.toLowerCase()),
-      );
-      router.push({ pathname: '/(tabs)/map', params: found ? { locationId: found.id } : {} });
-      return;
-    }
-    router.push('/(tabs)/map');
+    router.push({
+      pathname: '/(tabs)/map',
+      params: locationText ? { locationName: locationText } : {},
+    });
   }
 
   const firstName = meResult?.profile?.full_name?.split(' ')[0] ?? '';

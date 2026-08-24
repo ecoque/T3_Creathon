@@ -1,80 +1,292 @@
 import { useLocalSearchParams } from 'expo-router';
-import { Building2, Coffee, MapPin, Navigation, Presentation } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { Check, MapPin, Navigation, Radio, Search, Store, X } from 'lucide-react-native';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Svg, { Polygon, Rect } from 'react-native-svg';
+import {
+  ActivityIndicator,
+  Image,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { Circle, Line, Polyline, Svg } from 'react-native-svg';
 
 import { AppHeader } from '../../components/AppHeader';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { colors } from '../../constants/theme';
-import { venuePoints } from '../../constants/venuePoints';
+import { ZONE_COLORS, ZONE_LETTER, ZONE_ORDER, isBoothPlaced, zoneQuadrant } from '../../lib/boothGrid';
+import { DEFAULT_WALL_THICKNESS, findRoute, type RouteObstacle, type RoutePoint } from '../../lib/routePlanner';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
-import type { VenuePoint } from '../../types';
+import { useImageAspectRatio } from '../../lib/useImageAspectRatio';
+import { useVenueMap } from '../../lib/useVenueMap';
 
-const MAP_WIDTH = 340;
-const MAP_HEIGHT = 300;
+// Stant ve sahnelerin krokideki yaklaşık "ayak izi" — rota hesaplanırken bu
+// yarıçap kadar alan etraflarından dolanılıyor (bkz. lib/routePlanner.ts).
+const BOOTH_OBSTACLE_RADIUS = 4;
+const STAGE_OBSTACLE_RADIUS = 6;
 
-const DENSITY_COLORS: Record<VenuePoint['density'], string> = {
-  Sakin: colors.success,
-  Normal: '#b06000',
-  Yoğun: colors.danger,
+type LocationEntry = {
+  key: string;
+  type: 'booth' | 'stage';
+  label: string;
+  sublabel: string;
+  x: number;
+  y: number;
 };
 
-function pinIcon(type: VenuePoint['type']) {
-  if (type === 'stage') return Presentation;
-  if (type === 'food') return Coffee;
-  return Building2;
+function LayerToggle({
+  active,
+  label,
+  onPress,
+}: {
+  active: boolean;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: active }}
+      onPress={onPress}
+      style={styles.layerToggle}
+    >
+      <View style={[styles.checkbox, active && styles.checkboxActive]}>
+        {active ? <Check size={10} strokeWidth={3} color={colors.white} /> : null}
+      </View>
+      <Text style={styles.layerToggleText}>{label}</Text>
+    </Pressable>
+  );
 }
 
-function pinColor(type: VenuePoint['type']) {
-  if (type === 'stage') return colors.primary;
-  if (type === 'food') return colors.accent;
-  return colors.secondary;
+// Rota bul panelindeki "Başlangıç"/"Bitiş" seçicilerinin ikisi de bu modalı
+// açıyor — arama kutusuyla filtrelenen tek bir stant + sahne listesi.
+function LocationPickerModal({
+  visible,
+  locations,
+  onSelect,
+  onClose,
+  t,
+}: {
+  visible: boolean;
+  locations: LocationEntry[];
+  onSelect: (location: LocationEntry) => void;
+  onClose: () => void;
+  t: (key: string) => string;
+}) {
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (visible) setSearch('');
+  }, [visible]);
+
+  const needle = search.trim().toLocaleLowerCase('tr');
+  const filtered = needle
+    ? locations.filter(
+        (item) =>
+          item.label.toLocaleLowerCase('tr').includes(needle) ||
+          item.sublabel.toLocaleLowerCase('tr').includes(needle),
+      )
+    : locations;
+  const booths = filtered.filter((item) => item.type === 'booth');
+  const stages = filtered.filter((item) => item.type === 'stage');
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={pickerStyles.overlay}>
+        <View style={pickerStyles.card}>
+          <View style={pickerStyles.header}>
+            <View style={pickerStyles.searchBox}>
+              <Search size={15} color={colors.textMuted} />
+              <TextInput
+                style={pickerStyles.searchInput}
+                value={search}
+                onChangeText={setSearch}
+                placeholder={t('map.pickerSearchPlaceholder')}
+                placeholderTextColor={colors.textFaint}
+                autoFocus
+              />
+            </View>
+            <Pressable onPress={onClose} hitSlop={8} style={pickerStyles.closeBtn}>
+              <X size={19} color={colors.textMuted} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={pickerStyles.list}>
+            {!filtered.length ? <Text style={pickerStyles.empty}>{t('map.pickerEmpty')}</Text> : null}
+
+            {booths.length ? (
+              <>
+                <Text style={pickerStyles.sectionHeader}>{t('map.pickerBoothsHeader')}</Text>
+                {booths.map((item) => (
+                  <Pressable key={item.key} style={pickerStyles.row} onPress={() => onSelect(item)}>
+                    <Store size={15} color={colors.primary} />
+                    <View style={pickerStyles.rowCopy}>
+                      <Text style={pickerStyles.rowLabel}>{item.label}</Text>
+                      <Text style={pickerStyles.rowSublabel} numberOfLines={1}>
+                        {item.sublabel}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </>
+            ) : null}
+
+            {stages.length ? (
+              <>
+                <Text style={pickerStyles.sectionHeader}>{t('map.pickerStagesHeader')}</Text>
+                {stages.map((item) => (
+                  <Pressable key={item.key} style={pickerStyles.row} onPress={() => onSelect(item)}>
+                    <Radio size={15} color={colors.primary} />
+                    <View style={pickerStyles.rowCopy}>
+                      <Text style={pickerStyles.rowLabel}>{item.label}</Text>
+                      <Text style={pickerStyles.rowSublabel} numberOfLines={1}>
+                        {item.sublabel}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ))}
+              </>
+            ) : null}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
 }
 
 export default function MapScreen() {
   const { t } = useTranslation();
-  const params = useLocalSearchParams<{ locationId?: string }>();
+  const params = useLocalSearchParams<{ locationName?: string }>();
   const { data: meResult } = useCurrentProfile();
+  const { data, isLoading } = useVenueMap();
 
-  const [floor, setFloor] = useState<1 | 2>(1);
-  const [filter, setFilter] = useState<'all' | 'stage' | 'food' | 'service'>('all');
-  const [selected, setSelected] = useState<VenuePoint | null>(venuePoints[0] ?? null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [layers, setLayers] = useState({ booths: true, stages: true });
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [routeStartKey, setRouteStartKey] = useState<string | null>(null);
+  const [routeEndKey, setRouteEndKey] = useState<string | null>(null);
+  const [routePoints, setRoutePoints] = useState<RoutePoint[] | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [pickerFor, setPickerFor] = useState<'start' | 'end' | null>(null);
 
+  const hasFloorPlan = !!data?.floorPlanUrl;
+  // Admin ekranıyla (AdminMapManagement.tsx) BİREBİR AYNI en-boy oranı —
+  // aksi halde aynı kroki fotoğrafı iki ekranda farklı kırpılır ve
+  // admin'in çizdiği duvarlar/pinler burada kaymış görünür.
+  const floorPlanAspectRatio = useImageAspectRatio(hasFloorPlan ? data?.floorPlanUrl : null);
+
+  const locations = useMemo<LocationEntry[]>(() => {
+    if (!data) return [];
+    const boothEntries: LocationEntry[] = data.booths.filter(isBoothPlaced).map((booth) => ({
+      key: `booth:${booth.id}`,
+      type: 'booth' as const,
+      label: booth.boothNo,
+      sublabel: booth.companyName,
+      x: booth.mapX,
+      y: booth.mapY,
+    }));
+    const stageEntries: LocationEntry[] = data.stages.map((stage) => ({
+      key: `stage:${stage.id}`,
+      type: 'stage' as const,
+      label: stage.name,
+      sublabel: stage.type,
+      x: stage.mapX,
+      y: stage.mapY,
+    }));
+    return [...boothEntries, ...stageEntries];
+  }, [data]);
+
+  const locationByKey = useMemo(() => new Map(locations.map((item) => [item.key, item])), [locations]);
+  const selected = selectedKey ? locationByKey.get(selectedKey) || null : null;
+  const selectedBooth =
+    selected?.type === 'booth' ? data?.booths.find((booth) => `booth:${booth.id}` === selected.key) : undefined;
+  const selectedStage =
+    selected?.type === 'stage' ? data?.stages.find((stage) => `stage:${stage.id}` === selected.key) : undefined;
+
+  // Bir oturumun konumuna ("location" metnine) en yakın gerçek sahneyi
+  // bulup otomatik seçiyor — bkz. app/(tabs)/home.tsx > goToMap.
   useEffect(() => {
-    if (params.locationId) {
-      const found = venuePoints.find((p) => p.id === params.locationId);
-      if (found) {
-        setSelected(found);
-        setFloor(found.floor);
-      }
+    if (!params.locationName || !data) return;
+    const needle = params.locationName.toLocaleLowerCase('tr');
+    const stage = data.stages.find(
+      (item) =>
+        item.name.toLocaleLowerCase('tr').includes(needle) ||
+        needle.includes(item.name.toLocaleLowerCase('tr')),
+    );
+    if (stage) setSelectedKey(`stage:${stage.id}`);
+  }, [params.locationName, data]);
+
+  function toggleLayer(key: 'booths' | 'stages') {
+    setLayers((current) => ({ ...current, [key]: !current[key] }));
+  }
+
+  function selectLocation(key: string) {
+    setSelectedKey(key);
+  }
+
+  function handlePickerSelect(location: LocationEntry) {
+    if (pickerFor === 'start') setRouteStartKey(location.key);
+    else if (pickerFor === 'end') setRouteEndKey(location.key);
+    setPickerFor(null);
+    setRouteError(null);
+  }
+
+  function buildRoute() {
+    const start = routeStartKey ? locationByKey.get(routeStartKey) : null;
+    const end = routeEndKey ? locationByKey.get(routeEndKey) : null;
+    if (!start || !end) {
+      setRouteError(t('map.routeMissingError'));
+      return;
     }
-  }, [params.locationId]);
+    if (start.key === end.key) {
+      setRouteError(t('map.routeSameError'));
+      return;
+    }
+    const boothStageObstacles: RouteObstacle[] = locations
+      .filter((item) => item.key !== start.key && item.key !== end.key)
+      .map((item) => ({
+        kind: 'circle',
+        id: item.key,
+        x: item.x,
+        y: item.y,
+        radius: item.type === 'stage' ? STAGE_OBSTACLE_RADIUS : BOOTH_OBSTACLE_RADIUS,
+      }));
+    // Admin'in krokiye elle çizdiği duvarlar — her kroki fotoğrafı farklı
+    // olduğu için otomatik tespit edilmiyor, admin'in kendi işaretlediği
+    // çizgiler kullanılıyor (bkz. AdminMapManagement.tsx > duvar çizme modu).
+    const wallObstacles: RouteObstacle[] = (data?.floorPlanWalls || []).map((wall) => ({
+      kind: 'wall',
+      id: wall.id,
+      x1: wall.x1,
+      y1: wall.y1,
+      x2: wall.x2,
+      y2: wall.y2,
+      thickness: DEFAULT_WALL_THICKNESS,
+    }));
+    const path = findRoute(
+      { x: start.x, y: start.y },
+      { x: end.x, y: end.y },
+      [...boothStageObstacles, ...wallObstacles],
+    );
+    if (!path) {
+      setRoutePoints(null);
+      setRouteError(t('map.routeNotFound'));
+      return;
+    }
+    setRoutePoints(path);
+    setRouteError(null);
+  }
 
-  const visiblePoints = venuePoints.filter((p) => {
-    if (p.floor !== floor) return false;
-    if (filter === 'all') return true;
-    if (filter === 'stage') return p.type === 'stage';
-    if (filter === 'food') return p.type === 'food';
-    return p.type === 'service' || p.type === 'networking';
-  });
-
-  const filters: { id: typeof filter; label: string }[] = [
-    { id: 'all', label: t('map.filterAll') },
-    { id: 'stage', label: t('map.filterStage') },
-    { id: 'food', label: t('map.filterFood') },
-    { id: 'service', label: t('map.filterService') },
-  ];
-
-  const densityPosition = selected
-    ? selected.density === 'Sakin'
-      ? '15%'
-      : selected.density === 'Normal'
-        ? '50%'
-        : '85%'
-    : '50%';
+  function clearRoute() {
+    setRoutePoints(null);
+    setRouteError(null);
+    setRouteStartKey(null);
+    setRouteEndKey(null);
+  }
 
   return (
     <View style={styles.screen}>
@@ -84,137 +296,295 @@ export default function MapScreen() {
         onOpenNotifications={() => setNotificationsOpen(true)}
       />
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.titleRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>{t('map.title')}</Text>
-            <Text style={styles.subtitle}>{t('map.subtitle')}</Text>
-          </View>
-          <View style={styles.floorSwitch}>
-            <Pressable
-              style={[styles.floorBtn, floor === 1 && styles.floorBtnActive]}
-              onPress={() => setFloor(1)}
-            >
-              <Text style={[styles.floorBtnText, floor === 1 && styles.floorBtnTextActive]}>1</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.floorBtn, floor === 2 && styles.floorBtnActive]}
-              onPress={() => setFloor(2)}
-            >
-              <Text style={[styles.floorBtnText, floor === 2 && styles.floorBtnTextActive]}>2</Text>
-            </Pressable>
-          </View>
+        <View>
+          <Text style={styles.title}>{t('map.title')}</Text>
+          <Text style={styles.subtitle}>{t('map.subtitle')}</Text>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-          {filters.map((f) => {
-            const selectedFilter = filter === f.id;
-            return (
-              <Pressable
-                key={f.id}
-                onPress={() => setFilter(f.id)}
-                style={[styles.filterChip, selectedFilter && styles.filterChipSelected]}
-              >
-                <Text style={[styles.filterChipText, selectedFilter && styles.filterChipTextSelected]}>
-                  {f.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+        <View style={styles.layerBar}>
+          <LayerToggle
+            active={layers.booths}
+            label={`${t('map.layerBooths')} (${data?.booths.filter(isBoothPlaced).length || 0})`}
+            onPress={() => toggleLayer('booths')}
+          />
+          <LayerToggle
+            active={layers.stages}
+            label={`${t('map.layerStages')} (${data?.stages.length || 0})`}
+            onPress={() => toggleLayer('stages')}
+          />
+        </View>
 
-        <View style={styles.mapStage}>
-          <Svg width="100%" height="100%" viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}>
-            <Rect x={0} y={0} width={MAP_WIDTH} height={MAP_HEIGHT} fill="#eef3f8" />
-            {floor === 1 ? (
-              <>
-                <Polygon points="120,80 250,30 300,75 165,125" fill="#ffffff" stroke="#9ab6cf" strokeWidth={1.5} />
-                <Polygon points="140,150 260,105 310,155 190,200" fill="#f8fafc" stroke="#cbd5e1" strokeWidth={1.5} />
-                <Polygon points="45,140 130,105 155,145 75,185" fill="#ffffff" stroke="#9ab6cf" strokeWidth={1.5} />
-                <Polygon points="220,190 320,155 345,195 245,235" fill="#ffffff" stroke="#9ab6cf" strokeWidth={1.5} />
-                <Polygon points="80,200 175,165 210,210 115,245" fill="#ffffff" stroke="#9ab6cf" strokeWidth={1.5} />
-              </>
-            ) : (
-              <>
-                <Polygon points="90,90 220,45 255,90 130,135" fill="#ffffff" stroke="#9ab6cf" strokeWidth={1.5} />
-                <Polygon points="200,115 310,75 335,115 225,160" fill="#ffffff" stroke="#9ab6cf" strokeWidth={1.5} />
-              </>
-            )}
-          </Svg>
-
-          {visiblePoints.map((point) => {
-            const Icon = pinIcon(point.type);
-            const isSelected = selected?.id === point.id;
-            return (
-              <Pressable
-                key={point.id}
-                onPress={() => setSelected(point)}
-                style={[
-                  styles.pin,
-                  { left: `${point.x}%`, top: `${point.y}%` },
-                  isSelected && { transform: [{ translateX: -18 }, { translateY: -18 }, { scale: 1.15 }] },
-                ]}
-              >
-                <View style={[styles.pinDot, { backgroundColor: pinColor(point.type) }]}>
-                  <Icon size={14} color={colors.white} />
+        <View style={styles.mapCard}>
+          {isLoading ? (
+            <View style={styles.mapLoading}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : (
+            <View style={[styles.mapCanvas, { aspectRatio: floorPlanAspectRatio }]}>
+              {hasFloorPlan ? (
+                <Image
+                  source={{ uri: data?.floorPlanUrl }}
+                  resizeMode="contain"
+                  style={StyleSheet.absoluteFill}
+                />
+              ) : (
+                <View pointerEvents="none" style={styles.noFloorPlan}>
+                  <MapPin size={18} color={colors.textFaint} />
+                  <Text style={styles.noFloorPlanText}>{t('map.noFloorPlan')}</Text>
                 </View>
-                <View style={[styles.pinLabel, isSelected && styles.pinLabelActive]}>
-                  <Text style={[styles.pinLabelText, isSelected && { color: colors.white }]} numberOfLines={1}>
-                    {point.name.split('(')[0].trim()}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })}
+              )}
 
-          <View style={styles.densityCard}>
-            <View style={styles.densityHeaderRow}>
-              <Text style={styles.densityTitle}>{t('map.densityTitle')}</Text>
-              {selected ? (
-                <Text style={[styles.densityValue, { color: DENSITY_COLORS[selected.density] }]}>
-                  {selected.density}
-                </Text>
+              <View pointerEvents="none" style={styles.centerDividerV} />
+              <View pointerEvents="none" style={styles.centerDividerH} />
+
+              {ZONE_ORDER.map((code) => {
+                const { right, bottom } = zoneQuadrant(code);
+                return (
+                  <View
+                    key={code}
+                    pointerEvents="none"
+                    style={[
+                      styles.zoneCornerTag,
+                      { backgroundColor: ZONE_COLORS[code] },
+                      right ? { right: 8 } : { left: 8 },
+                      bottom ? { bottom: 8 } : { top: 8 },
+                    ]}
+                  >
+                    <Text style={styles.zoneCornerTagText}>{ZONE_LETTER[code]}</Text>
+                  </View>
+                );
+              })}
+
+              {data?.floorPlanWalls?.length ? (
+                <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+                  {data.floorPlanWalls.map((wall) => (
+                    <Line
+                      key={wall.id}
+                      x1={wall.x1}
+                      y1={wall.y1}
+                      x2={wall.x2}
+                      y2={wall.y2}
+                      stroke="rgba(15,23,42,0.55)"
+                      strokeWidth={DEFAULT_WALL_THICKNESS}
+                      strokeLinecap="round"
+                    />
+                  ))}
+                </Svg>
               ) : null}
+
+              {routePoints && routePoints.length > 1 ? (
+                <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+                  <Polyline
+                    points={routePoints.map((point) => `${point.x},${point.y}`).join(' ')}
+                    fill="none"
+                    stroke={colors.primary}
+                    strokeWidth={1.4}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeDasharray="4,3"
+                  />
+                  <Circle
+                    cx={routePoints[0].x}
+                    cy={routePoints[0].y}
+                    r={2.4}
+                    fill={colors.success}
+                    stroke={colors.white}
+                    strokeWidth={0.7}
+                  />
+                  <Circle
+                    cx={routePoints[routePoints.length - 1].x}
+                    cy={routePoints[routePoints.length - 1].y}
+                    r={2.4}
+                    fill={colors.danger}
+                    stroke={colors.white}
+                    strokeWidth={0.7}
+                  />
+                </Svg>
+              ) : null}
+
+              {layers.booths
+                ? data?.booths
+                    .filter(isBoothPlaced)
+                    .map((booth) => {
+                      const key = `booth:${booth.id}`;
+                      const active = selectedKey === key;
+                      const isRouteStart = routeStartKey === key;
+                      const isRouteEnd = routeEndKey === key;
+                      return (
+                        <Pressable
+                          key={key}
+                          onPress={() => selectLocation(key)}
+                          style={[
+                            styles.boothPin,
+                            { left: `${booth.mapX}%`, top: `${booth.mapY}%` },
+                            active && styles.boothPinSelected,
+                            isRouteStart && styles.pinRouteStart,
+                            isRouteEnd && styles.pinRouteEnd,
+                          ]}
+                        >
+                          <View style={[styles.boothPulse, { backgroundColor: ZONE_COLORS[booth.zone!] }]} />
+                          <Text style={styles.boothPinText} numberOfLines={1}>
+                            {booth.boothNo}
+                          </Text>
+                        </Pressable>
+                      );
+                    })
+                : null}
+
+              {layers.stages
+                ? data?.stages.map((stage) => {
+                    const key = `stage:${stage.id}`;
+                    const active = selectedKey === key;
+                    const isRouteStart = routeStartKey === key;
+                    const isRouteEnd = routeEndKey === key;
+                    return (
+                      <Pressable
+                        key={key}
+                        onPress={() => selectLocation(key)}
+                        style={[
+                          styles.stagePin,
+                          { left: `${stage.mapX}%`, top: `${stage.mapY}%` },
+                          active && styles.stagePinSelected,
+                          isRouteStart && styles.pinRouteStart,
+                          isRouteEnd && styles.pinRouteEnd,
+                        ]}
+                      >
+                        <View style={styles.stagePulse} />
+                        <Text style={styles.stagePinText} numberOfLines={1}>
+                          {stage.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })
+                : null}
             </View>
-            <View style={styles.densityBar}>
-              <View style={[styles.densityMarker, { left: densityPosition }]} />
-            </View>
-          </View>
+          )}
         </View>
 
-        {selected ? (
+        {selectedBooth ? (
           <View style={styles.detailCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={styles.detailTitle}>{selected.name}</Text>
-              <View
-                style={[
-                  styles.densityBadge,
-                  { backgroundColor: `${DENSITY_COLORS[selected.density]}22` },
-                ]}
-              >
-                <Text style={[styles.densityBadgeText, { color: DENSITY_COLORS[selected.density] }]}>
-                  {selected.density}
-                </Text>
-              </View>
+            <View style={styles.detailHeaderRow}>
+              <Text style={styles.detailTag}>{t('map.boothTag')}</Text>
+              <Text style={styles.detailBoothNo}>{selectedBooth.boothNo}</Text>
             </View>
-            <Text style={styles.detailDesc}>{selected.description}</Text>
-
-            {selected.currentEvent ? (
-              <View style={styles.currentEventBox}>
-                <MapPin size={14} color={colors.primary} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.currentEventLabel}>{t('map.currentSession')}</Text>
-                  <Text style={styles.currentEventText}>{selected.currentEvent}</Text>
-                </View>
-              </View>
+            <Text style={styles.detailTitle}>{selectedBooth.companyName}</Text>
+            <Text style={styles.detailCategory}>{selectedBooth.category}</Text>
+            {selectedBooth.description ? (
+              <Text style={styles.detailDesc}>{selectedBooth.description}</Text>
             ) : null}
-
-            <Pressable style={styles.directionsBtn}>
-              <Navigation size={16} color={colors.white} />
-              <Text style={styles.directionsBtnText}>{t('map.getDirections')}</Text>
-            </Pressable>
+            <View style={styles.detailActions}>
+              <Pressable
+                style={styles.detailActionBtn}
+                onPress={() => {
+                  setRouteStartKey(`booth:${selectedBooth.id}`);
+                  setRouteError(null);
+                }}
+              >
+                <Navigation size={14} color={colors.primary} />
+                <Text style={styles.detailActionText}>{t('map.routeSetStart')}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.detailActionBtn}
+                onPress={() => {
+                  setRouteEndKey(`booth:${selectedBooth.id}`);
+                  setRouteError(null);
+                }}
+              >
+                <MapPin size={14} color={colors.primary} />
+                <Text style={styles.detailActionText}>{t('map.routeSetEnd')}</Text>
+              </Pressable>
+            </View>
           </View>
-        ) : null}
+        ) : selectedStage ? (
+          <View style={styles.detailCard}>
+            <View style={styles.detailHeaderRow}>
+              <Text style={styles.detailTag}>{t('map.stageTag')}</Text>
+            </View>
+            <Text style={styles.detailTitle}>{selectedStage.name}</Text>
+            <Text style={styles.detailCategory}>{selectedStage.type}</Text>
+            {selectedStage.description ? (
+              <Text style={styles.detailDesc}>{selectedStage.description}</Text>
+            ) : null}
+            <View style={styles.detailActions}>
+              <Pressable
+                style={styles.detailActionBtn}
+                onPress={() => {
+                  setRouteStartKey(`stage:${selectedStage.id}`);
+                  setRouteError(null);
+                }}
+              >
+                <Navigation size={14} color={colors.primary} />
+                <Text style={styles.detailActionText}>{t('map.routeSetStart')}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.detailActionBtn}
+                onPress={() => {
+                  setRouteEndKey(`stage:${selectedStage.id}`);
+                  setRouteError(null);
+                }}
+              >
+                <MapPin size={14} color={colors.primary} />
+                <Text style={styles.detailActionText}>{t('map.routeSetEnd')}</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.emptyCard}>
+            <MapPin size={20} color={colors.textMuted} />
+            <Text style={styles.emptyText}>{t('map.selectPin')}</Text>
+          </View>
+        )}
+
+        <View style={styles.routeCard}>
+          <Text style={styles.routeTitle}>{t('map.routeFinderTitle')}</Text>
+
+          <Pressable style={styles.routeSelector} onPress={() => setPickerFor('start')}>
+            <View style={[styles.routeDot, { backgroundColor: colors.success }]} />
+            <View style={styles.routeSelectorCopy}>
+              <Text style={styles.routeSelectorLabel}>{t('map.routeStart')}</Text>
+              <Text style={styles.routeSelectorValue} numberOfLines={1}>
+                {routeStartKey
+                  ? locationByKey.get(routeStartKey)?.label
+                  : t('map.routeStartPlaceholder')}
+              </Text>
+            </View>
+          </Pressable>
+
+          <Pressable style={styles.routeSelector} onPress={() => setPickerFor('end')}>
+            <View style={[styles.routeDot, { backgroundColor: colors.danger }]} />
+            <View style={styles.routeSelectorCopy}>
+              <Text style={styles.routeSelectorLabel}>{t('map.routeEnd')}</Text>
+              <Text style={styles.routeSelectorValue} numberOfLines={1}>
+                {routeEndKey ? locationByKey.get(routeEndKey)?.label : t('map.routeEndPlaceholder')}
+              </Text>
+            </View>
+          </Pressable>
+
+          {routeError ? <Text style={styles.routeErrorText}>{routeError}</Text> : null}
+          {!routeError && routePoints ? <Text style={styles.routeSuccessText}>{t('map.routeFound')}</Text> : null}
+
+          <View style={styles.routeButtonsRow}>
+            <Pressable style={styles.routeBuildBtn} onPress={buildRoute}>
+              <Navigation size={15} color={colors.white} />
+              <Text style={styles.routeBuildBtnText}>{t('map.routeBuild')}</Text>
+            </Pressable>
+            {routePoints || routeStartKey || routeEndKey ? (
+              <Pressable style={styles.routeClearBtn} onPress={clearRoute}>
+                <X size={14} color={colors.textMuted} />
+                <Text style={styles.routeClearBtnText}>{t('map.routeClear')}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
       </ScrollView>
+
+      <LocationPickerModal
+        visible={pickerFor != null}
+        locations={locations}
+        onSelect={handlePickerSelect}
+        onClose={() => setPickerFor(null)}
+        t={t}
+      />
 
       <NotificationsModal visible={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
     </View>
@@ -224,125 +594,320 @@ export default function MapScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { padding: 16, paddingBottom: 32, gap: 14 },
-  titleRow: { flexDirection: 'row', alignItems: 'flex-start' },
   title: { fontSize: 22, fontWeight: '800', color: colors.text },
   subtitle: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
-  floorSwitch: {
+  layerBar: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  layerToggle: {
     flexDirection: 'row',
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 10,
-    padding: 3,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  floorBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
-  floorBtnActive: { backgroundColor: colors.white },
-  floorBtnText: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
-  floorBtnTextActive: { color: colors.primary },
-  filterChip: {
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  filterChipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
-  filterChipText: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
-  filterChipTextSelected: { color: colors.white },
-  mapStage: {
-    height: 300,
-    borderRadius: 18,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: '#eef3f8',
-  },
-  pin: {
-    position: 'absolute',
     alignItems: 'center',
-    width: 0,
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
   },
-  pinDot: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  layerToggleText: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
+  checkbox: {
+    width: 15,
+    height: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: colors.white,
-  },
-  pinLabel: {
-    marginTop: 4,
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: colors.border,
-    maxWidth: 90,
-  },
-  pinLabelActive: { backgroundColor: colors.text, borderColor: colors.text },
-  pinLabelText: { fontSize: 9, fontWeight: '700', color: colors.text },
-  densityCard: {
-    position: 'absolute',
-    left: 12,
-    right: 12,
-    bottom: 12,
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 12,
-  },
-  densityHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  densityTitle: { fontSize: 12, fontWeight: '800', color: colors.text },
-  densityValue: { fontSize: 11, fontWeight: '700' },
-  densityBar: {
-    height: 8,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
     borderRadius: 4,
-    overflow: 'hidden',
-    backgroundColor: '#34a853',
+    backgroundColor: colors.surface,
   },
-  densityMarker: {
+  checkboxActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  mapCard: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  mapLoading: {
+    height: 300,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceMuted,
+  },
+  mapCanvas: {
+    // Yükseklik artık sabit değil — krokinin GERÇEK en-boy oranına göre
+    // (bkz. lib/useImageAspectRatio.ts) otomatik hesaplanıyor, admin
+    // ekranıyla birebir aynı oranı kullanmak için (bkz. o dosyadaki
+    // `mapCanvas` stili) — aksi halde aynı fotoğraf iki ekranda farklı
+    // kırpılır ve duvarlar/pinler kaymış görünür.
+    width: '100%',
+    overflow: 'hidden',
+    backgroundColor: colors.surfaceMuted,
+  },
+  noFloorPlan: {
     position: 'absolute',
+    left: 24,
+    right: 24,
+    top: '42%',
+    alignItems: 'center',
+    gap: 8,
+    padding: 14,
+  },
+  noFloorPlanText: { color: colors.textFaint, fontSize: 11, lineHeight: 16, textAlign: 'center' },
+  centerDividerV: {
+    position: 'absolute',
+    left: '50%',
     top: 0,
     bottom: 0,
-    width: 4,
-    backgroundColor: colors.white,
-    borderRadius: 2,
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(0,0,0,0.12)',
   },
+  centerDividerH: {
+    position: 'absolute',
+    top: '50%',
+    left: 0,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'rgba(0,0,0,0.12)',
+  },
+  zoneCornerTag: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.85)',
+  },
+  zoneCornerTagText: { color: colors.white, fontSize: 11, fontWeight: '900' },
+  boothPin: {
+    position: 'absolute',
+    zIndex: 4,
+    maxWidth: 120,
+    minHeight: 24,
+    transform: [{ translateX: -10 }, { translateY: -12 }],
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#64748b',
+    borderRadius: 8,
+    backgroundColor: 'rgba(15,23,42,0.92)',
+  },
+  boothPinSelected: {
+    borderColor: colors.white,
+    transform: [{ translateX: -10 }, { translateY: -12 }, { scale: 1.08 }],
+  },
+  boothPulse: { width: 7, height: 7, borderRadius: 4 },
+  boothPinText: { flexShrink: 1, color: colors.white, fontSize: 8, fontWeight: '900' },
+  stagePin: {
+    position: 'absolute',
+    zIndex: 4,
+    maxWidth: 140,
+    minHeight: 26,
+    transform: [{ translateX: -12 }, { translateY: -13 }],
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: '#64748b',
+    borderRadius: 9,
+    backgroundColor: 'rgba(15,23,42,0.92)',
+  },
+  stagePinSelected: {
+    borderColor: colors.primary,
+    transform: [{ translateX: -12 }, { translateY: -13 }, { scale: 1.08 }],
+  },
+  stagePulse: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#34d399' },
+  stagePinText: { flexShrink: 1, color: colors.white, fontSize: 8, fontWeight: '800' },
+  pinRouteStart: { borderColor: colors.success, borderWidth: 2 },
+  pinRouteEnd: { borderColor: colors.danger, borderWidth: 2 },
   detailCard: {
-    backgroundColor: colors.white,
-    borderRadius: 18,
+    backgroundColor: colors.surface,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 16,
-    gap: 10,
+    padding: 14,
+    gap: 6,
   },
-  detailTitle: { fontSize: 16, fontWeight: '800', color: colors.text, flexShrink: 1 },
-  densityBadge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
-  densityBadgeText: { fontSize: 10, fontWeight: '800' },
-  detailDesc: { fontSize: 12, color: colors.textMuted, lineHeight: 18 },
-  currentEventBox: {
+  detailHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  detailTag: {
+    color: colors.primary,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  detailBoothNo: {
+    color: colors.text,
+    fontSize: 10,
+    fontWeight: '900',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceMuted,
+  },
+  detailTitle: { fontSize: 15, fontWeight: '800', color: colors.text },
+  detailCategory: { fontSize: 11, color: colors.textMuted },
+  detailDesc: { fontSize: 12, color: colors.textMuted, lineHeight: 17, marginTop: 2 },
+  detailActions: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  detailActionBtn: {
+    flex: 1,
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 38,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderRadius: 10,
+    backgroundColor: colors.primarySoft,
+  },
+  detailActionText: { color: colors.primary, fontSize: 11, fontWeight: '800' },
+  emptyCard: {
+    alignItems: 'center',
     gap: 8,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+  },
+  emptyText: { maxWidth: 280, color: colors.textMuted, fontSize: 12, lineHeight: 17, textAlign: 'center' },
+  routeCard: {
+    gap: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+  },
+  routeTitle: { fontSize: 13, fontWeight: '900', color: colors.text },
+  routeSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 48,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
     backgroundColor: colors.background,
+  },
+  routeDot: { width: 10, height: 10, borderRadius: 5 },
+  routeSelectorCopy: { flex: 1, minWidth: 0 },
+  routeSelectorLabel: { color: colors.textFaint, fontSize: 9, fontWeight: '800', textTransform: 'uppercase' },
+  routeSelectorValue: { color: colors.text, fontSize: 13, fontWeight: '700', marginTop: 1 },
+  routeErrorText: {
+    color: colors.danger,
+    backgroundColor: colors.dangerBg,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+    borderRadius: 10,
+    padding: 9,
+    fontSize: 11,
+  },
+  routeSuccessText: {
+    color: colors.success,
+    backgroundColor: colors.successBg,
+    borderWidth: 1,
+    borderColor: colors.successBorder,
+    borderRadius: 10,
+    padding: 9,
+    fontSize: 11,
+  },
+  routeButtonsRow: { flexDirection: 'row', gap: 8 },
+  routeBuildBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
+  },
+  routeBuildBtnText: { color: colors.white, fontSize: 12, fontWeight: '900' },
+  routeClearBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 14,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 10,
   },
-  currentEventLabel: { fontSize: 10, fontWeight: '800', color: colors.textFaint, textTransform: 'uppercase' },
-  currentEventText: { fontSize: 12, fontWeight: '700', color: colors.text, marginTop: 2 },
-  directionsBtn: {
+  routeClearBtnText: { color: colors.textMuted, fontSize: 11, fontWeight: '800' },
+});
+
+const pickerStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.5)',
+    justifyContent: 'flex-end',
+  },
+  card: {
+    maxHeight: '80%',
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
+  },
+  header: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  searchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
-    backgroundColor: colors.primary,
-    borderRadius: 14,
-    paddingVertical: 13,
+    height: 42,
+    paddingHorizontal: 12,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  searchInput: { flex: 1, fontSize: 13, color: colors.text },
+  closeBtn: {
+    width: 34,
+    height: 34,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: colors.surfaceMuted,
   },
-  directionsBtnText: { color: colors.white, fontWeight: '700', fontSize: 13 },
+  list: { padding: 14, gap: 4, paddingBottom: 28 },
+  empty: { textAlign: 'center', color: colors.textFaint, fontSize: 12, paddingVertical: 20 },
+  sectionHeader: {
+    color: colors.textFaint,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 48,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+  },
+  rowCopy: { flex: 1, minWidth: 0 },
+  rowLabel: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  rowSublabel: { color: colors.textMuted, fontSize: 11, marginTop: 1 },
 });

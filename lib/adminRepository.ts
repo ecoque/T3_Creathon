@@ -14,7 +14,9 @@ import type {
   SessionStatus,
   ZoneDensityInfo,
 } from '../types/admin';
+import { isBoothPlaced, nextBoothNumber, zoneForPercent } from './boothGrid';
 import { supabase } from './supabase';
+import { computeLiveZoneOccupancy, LIVE_WINDOW_MS } from './zoneDensity';
 
 type Row = Record<string, any>;
 
@@ -55,6 +57,29 @@ function databaseError(error: { message?: string; code?: string } | null, contex
 function ensure(result: { error: any }, context: string) {
   const error = databaseError(result.error, context);
   if (error) throw error;
+}
+
+// Bağımlılıksız (Buffer/atob gerektirmeyen — Hermes'te ikisi de garanti değil)
+// base64 → binary çözücü. Supabase Storage'a yerel bir resmi yüklerken
+// fetch(localUri) yerine bunu kullanıyoruz (bkz. uploadFloorPlanImage).
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function decodeBase64(base64: string): Uint8Array {
+  const clean = base64.replace(/[^A-Za-z0-9+/]/g, '');
+  const bytes: number[] = [];
+  let buffer = 0;
+  let bits = 0;
+  for (let i = 0; i < clean.length; i++) {
+    const value = BASE64_ALPHABET.indexOf(clean[i]);
+    if (value === -1) continue;
+    buffer = (buffer << 6) | value;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((buffer >> bits) & 0xff);
+    }
+  }
+  return Uint8Array.from(bytes);
 }
 
 function safeDate(value?: string | null) {
@@ -178,6 +203,8 @@ function mapSettings(row?: Row): EventSettings {
     startDate: row.start_date || undefined,
     endDate: row.end_date || undefined,
     logoUrl: row.logo_url || undefined,
+    floorPlanUrl: row.floor_plan_url || undefined,
+    floorPlanWalls: Array.isArray(row.floor_plan_walls) ? row.floor_plan_walls : [],
     openingTime: row.opening_time,
     closingTime: row.closing_time,
     locationTrackingStart: row.location_tracking_start,
@@ -197,6 +224,7 @@ function mapSettings(row?: Row): EventSettings {
 }
 
 export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
+  const liveWindowStart = new Date(Date.now() - LIVE_WINDOW_MS).toISOString();
   const results = await Promise.all([
     supabase.from('zones').select('*').order('name'),
     supabase.from('stages').select('*').order('name'),
@@ -210,6 +238,7 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
     supabase.from('meeting_requests').select('*').order('created_at', { ascending: false }),
     supabase.from('checkins').select('*'),
     supabase.from('admin_logs').select('*').order('created_at', { ascending: false }).limit(30),
+    supabase.from('location_pings').select('user_id,lat,lng,timestamp').gte('timestamp', liveWindowStart),
   ]);
   const labels = [
     'Bölgeler alınamadı',
@@ -224,10 +253,11 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
     'Görüşmeler alınamadı',
     'Check-in kayıtları alınamadı',
     'Admin günlükleri alınamadı',
+    'Canlı konum verileri alınamadı',
   ];
   results.forEach((result, index) => ensure(result, labels[index]));
 
-  const [zoneResult, stageResult, sessionResult, standResult, profileResult, privateAttendeeResult, userResult, announcementResult, settingsResult, meetingResult, checkinResult, logResult] = results;
+  const [zoneResult, stageResult, sessionResult, standResult, profileResult, privateAttendeeResult, userResult, announcementResult, settingsResult, meetingResult, checkinResult, logResult, livePingResult] = results;
   const zoneRows = (zoneResult.data || []) as Row[];
   const zoneById = new Map(zoneRows.map((row, index) => [row.id, zoneCode(row, index)]));
   const stages: AdminStage[] = ((stageResult.data || []) as Row[]).map((row) => ({
@@ -248,12 +278,14 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
 
   const booths: AdminBooth[] = ((standResult.data || []) as Row[]).map((row) => ({
     id: row.id,
-    boothNo: row.booth_no || row.name,
+    boothNo: row.booth_no || '',
     companyName: row.company_name || row.name,
     category: (row.category || row.type || 'Yapay Zeka') as AdminBooth['category'],
     description: row.description || '',
     logo: row.logo_url || '',
-    zone: zoneById.get(row.zone_id) || 'Zone A',
+    // row.zone_id null ise (henüz krokiye yerleştirilmemiş) zone de null
+    // kalmalı — isBoothPlaced bu alana bakıyor (bkz. lib/boothGrid.ts).
+    zone: row.zone_id ? zoneById.get(row.zone_id) || null : null,
     sponsorTier: (row.sponsor_tier || row.sponsor || 'Startup') as AdminBooth['sponsorTier'],
     mapX: Number(row.map_x ?? row.lng ?? 50),
     mapY: Number(row.map_y ?? row.lat ?? 50),
@@ -332,9 +364,31 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
     } as AdminMeetingRecord;
   });
 
+  // Bölge merkezi tanımlanmışsa (center_lat/center_lng dolu), aktif kişi sayısı
+  // artık admin'in elle girdiği bir sayı değil, son LIVE_WINDOW_MS içindeki gerçek
+  // location_pings verisinden hesaplanan canlı bir değer. Merkezi tanımlanmamış
+  // bölgeler için eski davranış (manuel active_attendees) korunuyor.
+  const livePings = (livePingResult.data || []) as Row[];
+  const zoneCircles = zoneRows.map((row) => ({
+    id: row.id,
+    centerLat: row.center_lat != null ? Number(row.center_lat) : null,
+    centerLng: row.center_lng != null ? Number(row.center_lng) : null,
+    radiusMeters: Number(row.radius_meters || 60),
+  }));
+  const liveOccupancyByZone = computeLiveZoneOccupancy(
+    zoneCircles,
+    livePings.map((row) => ({
+      user_id: row.user_id,
+      lat: Number(row.lat),
+      lng: Number(row.lng),
+      timestamp: row.timestamp,
+    })),
+  );
+
   const zones: ZoneDensityInfo[] = zoneRows.map((row, index) => {
     const capacity = Number(row.capacity || 0);
-    const active = Number(row.active_attendees || 0);
+    const hasGeofence = row.center_lat != null && row.center_lng != null;
+    const active = hasGeofence ? liveOccupancyByZone.get(row.id) || 0 : Number(row.active_attendees || 0);
     const percent = capacity > 0 ? Math.round((active / capacity) * 100) : 0;
     return {
       id: row.id,
@@ -348,6 +402,9 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
       avgAttendees: Number(row.avg_attendees || 0),
       description: row.description || '',
       color: row.color || '#0F766E',
+      centerLat: row.center_lat != null ? Number(row.center_lat) : null,
+      centerLng: row.center_lng != null ? Number(row.center_lng) : null,
+      radiusMeters: Number(row.radius_meters || 60),
     };
   });
 
@@ -452,14 +509,20 @@ export const adminRepository = {
   },
 
   async saveStage(data: Partial<AdminStage>, zones: ZoneDensityInfo[], editingId?: string) {
+    // Zone artık bu formdan manuel seçilmiyor — krokideki gerçek konumdan
+    // (mapX/mapY) otomatik türetiliyor, tıpkı updateStagePosition'da olduğu
+    // gibi. Böylece yeni bir alan için gösterilen "Zone D" (varsayılan merkez
+    // nokta) ile veritabanına yazılan zone_id her zaman tutarlı kalır.
+    const mapX = data.mapX ?? 50;
+    const mapY = data.mapY ?? 50;
     const payload = {
       name: data.name || 'Yeni Alan',
       type: data.type || 'Other',
-      zone_id: zoneIdFor(data.zone || 'Zone A', zones),
+      zone_id: zoneIdFor(data.zone || zoneForPercent(mapX, mapY), zones),
       capacity: data.capacity || 0,
       current_occupancy: data.currentOccupancy || 0,
-      map_x: data.mapX ?? 50,
-      map_y: data.mapY ?? 50,
+      map_x: mapX,
+      map_y: mapY,
       status: data.status || 'active',
       description: data.description || null,
       updated_at: new Date().toISOString(),
@@ -477,12 +540,61 @@ export const adminRepository = {
     await writeLog('Alan silindi', id, 'stage');
   },
 
+  // Bir alanı (sahne/oturum yeri) krokide serbestçe (kareye takılmadan)
+  // konumlandırır. Hangi zone'a düştüğü, dokunulan noktanın krokideki
+  // çeyreğinden otomatik belirlenir.
+  async updateStagePosition(id: string, mapX: number, mapY: number, zones: ZoneDensityInfo[]) {
+    const zone = zoneForPercent(mapX, mapY);
+    const result = await supabase
+      .from('stages')
+      .update({
+        map_x: mapX,
+        map_y: mapY,
+        zone_id: zoneIdFor(zone, zones),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+    ensure(result, 'Alan konumu güncellenemedi');
+    await writeLog('Alan krokide konumlandırıldı', id, 'stage');
+  },
+
+  async saveZone(data: Partial<ZoneDensityInfo>, editingId?: string) {
+    const payload: Row = {
+      name: data.name || 'Yeni Bölge',
+      center_lat: data.centerLat ?? null,
+      center_lng: data.centerLng ?? null,
+      radius_meters: data.radiusMeters || 60,
+      capacity: data.capacity || 0,
+      description: data.description || null,
+      updated_at: new Date().toISOString(),
+    };
+    if (!editingId) {
+      // Eski şemadan kalan zorunlu sütun; artık merkez + yarıçap kullanıyoruz.
+      payload.polygon = [];
+    }
+    const result = editingId
+      ? await supabase.from('zones').update(payload).eq('id', editingId)
+      : await supabase.from('zones').insert(payload);
+    ensure(result, 'Bölge kaydedilemedi');
+    await writeLog(editingId ? 'Bölge güncellendi' : 'Bölge oluşturuldu', payload.name, 'zone');
+  },
+
+  async deleteZone(id: string) {
+    const result = await supabase.from('zones').delete().eq('id', id);
+    ensure(result, 'Bölge silinemedi');
+    await writeLog('Bölge silindi', id, 'zone');
+  },
+
   async saveBooth(data: Partial<AdminBooth>, zones: ZoneDensityInfo[], editingId?: string) {
+    // Stant no ve krokideki konum artık bu formdan değil, Harita Yönetimi >
+    // Kroki ekranından atanıyor (bkz. placeBooth). Burada zone/booth_no
+    // sadece zaten atanmışsa (data içinde geliyorsa) korunuyor —
+    // yeni/henüz yerleştirilmemiş bir standa asla sahte bir zone atanmıyor.
     const payload: Row = {
       name: data.boothNo || data.companyName || 'Yeni Stand',
       type: data.category || 'Stand',
       sponsor: data.sponsorTier || null,
-      zone_id: zoneIdFor(data.zone || 'Zone A', zones),
+      zone_id: data.zone ? zoneIdFor(data.zone, zones) : null,
       booth_no: data.boothNo || null,
       company_name: data.companyName || null,
       category: data.category || null,
@@ -508,6 +620,52 @@ export const adminRepository = {
       : await supabase.from('stands').insert(payload);
     ensure(result, 'Stand kaydedilemedi');
     await writeLog(editingId ? 'Stand güncellendi' : 'Stand oluşturuldu', data.companyName || payload.name, 'booth');
+  },
+
+  // Bir standı krokinin (gerçek fotoğraf veya soyut görünüm) herhangi bir
+  // noktasına serbestçe yerleştirir — kareye takılma yok. Hangi zone'a
+  // düştüğü dokunulan noktadan otomatik belirlenir (bkz. zoneForPercent).
+  // Stant aynı zone içinde kalıyorsa numarası değişmez; başka bir zone'a
+  // taşınıyorsa (veya ilk kez yerleştiriliyorsa) o zone'un bir sonraki
+  // numarası otomatik atanır.
+  async placeBooth(boothId: string, mapX: number, mapY: number, booths: AdminBooth[], zones: ZoneDensityInfo[]) {
+    const target = booths.find((booth) => booth.id === boothId);
+    if (!target) throw new Error('Stant bulunamadı.');
+
+    const zone = zoneForPercent(mapX, mapY);
+    const keepsNumber = target.zone === zone && isBoothPlaced(target);
+    const boothNo = keepsNumber
+      ? target.boothNo
+      : nextBoothNumber(
+          zone,
+          booths.filter((booth) => booth.id !== boothId).map((booth) => booth.boothNo),
+        );
+
+    const result = await supabase
+      .from('stands')
+      .update({
+        zone_id: zoneIdFor(zone, zones),
+        booth_no: boothNo,
+        name: boothNo,
+        map_x: mapX,
+        map_y: mapY,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', boothId);
+    ensure(result, 'Stant krokiye yerleştirilemedi');
+    await writeLog('Stant krokiye yerleştirildi', `${boothNo} · ${target.companyName}`, 'booth');
+  },
+
+  // Bir standı krokiden kaldırır (silmez) — stant "Yerleştirilmedi" durumuna
+  // döner ve tekrar krokinin herhangi bir noktasına yerleştirilebilir.
+  async unplaceBooth(boothId: string, booths: AdminBooth[]) {
+    const target = booths.find((booth) => booth.id === boothId);
+    const result = await supabase
+      .from('stands')
+      .update({ zone_id: null, updated_at: new Date().toISOString() })
+      .eq('id', boothId);
+    ensure(result, 'Stant krokiden kaldırılamadı');
+    await writeLog('Stant krokiden kaldırıldı', target?.companyName || boothId, 'booth');
   },
 
   async deleteBooth(id: string) {
@@ -614,6 +772,8 @@ export const adminRepository = {
       start_date: settings.startDate || null,
       end_date: settings.endDate || null,
       logo_url: settings.logoUrl || null,
+      floor_plan_url: settings.floorPlanUrl || null,
+      floor_plan_walls: settings.floorPlanWalls || [],
       opening_time: settings.openingTime,
       closing_time: settings.closingTime,
       location_tracking_start: settings.locationTrackingStart,
@@ -632,5 +792,28 @@ export const adminRepository = {
       .upsert(payload, { onConflict: 'settings_key' });
     ensure(result, 'Etkinlik ayarları kaydedilemedi');
     await writeLog('Etkinlik ayarları güncellendi', settings.eventName, 'system');
+  },
+
+  // Admin tarafından cihazdan seçilen bir kroki resmini Supabase Storage'a
+  // yükler ve herkesin erişebileceği public bir URL döndürür (DB'ye
+  // kaydetmez — çağıran taraf bu URL'i saveSettings ile ayarlara yazar).
+  //
+  // NOT: React Native'in fetch()'i yerel galeri URI'lerini (file://, content://)
+  // güvenilir biçimde okuyamıyor — "Network request failed" hatasının sebebi bu
+  // (bilinen bir RN/Expo kısıtı). Bu yüzden dosyayı fetch ile okumak yerine,
+  // ImagePicker'dan doğrudan base64 olarak alıyoruz (bkz. AdminMapManagement.tsx
+  // > handlePickFloorPlan, base64: true) ve burada saf JS ile binary'e çeviriyoruz
+  // — expo-file-system gibi ek bir native modül/rebuild gerektirmiyor.
+  async uploadFloorPlanImage(base64: string, mimeType?: string): Promise<string> {
+    const bytes = decodeBase64(base64);
+    const ext = mimeType?.split('/')[1]?.toLowerCase() || 'jpg';
+    const path = `floor-plan-${Date.now()}.${ext}`;
+    const uploadResult = await supabase.storage
+      .from('floor-plans')
+      .upload(path, bytes, { contentType: mimeType || `image/${ext}`, upsert: true });
+    ensure(uploadResult, 'Kroki yüklenemedi');
+    const { data } = supabase.storage.from('floor-plans').getPublicUrl(path);
+    if (!data?.publicUrl) throw new Error('Kroki yüklendi ama bağlantı alınamadı.');
+    return data.publicUrl;
   },
 };

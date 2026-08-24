@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../../constants/theme';
+import { isBoothPlaced } from '../../lib/boothGrid';
 import type {
   AdminAnnouncement,
   AdminAttendee,
@@ -383,57 +384,46 @@ export function BoothEditorModal({
 }) {
   const [form, setForm] = useState({
     companyName: '',
-    boothNo: '',
     description: '',
     category: 'Yapay Zeka' as AdminBooth['category'],
-    zone: 'Zone A' as AdminBooth['zone'],
     sponsorTier: 'Startup' as AdminBooth['sponsorTier'],
     status: 'active' as AdminBooth['status'],
     contactPerson: '',
     contactEmail: '',
     logo: '',
     qrCodeUrl: '',
-    mapX: '50',
-    mapY: '50',
   });
   useEffect(
     () =>
       setForm({
         companyName: booth?.companyName || '',
-        boothNo: booth?.boothNo || '',
         description: booth?.description || '',
         category: booth?.category || 'Yapay Zeka',
-        zone: booth?.zone || 'Zone A',
         sponsorTier: booth?.sponsorTier || 'Startup',
         status: booth?.status || 'active',
         contactPerson: booth?.contactPerson || '',
         contactEmail: booth?.contactEmail || '',
         logo: booth?.logo || '',
         qrCodeUrl: booth?.qrCodeUrl || '',
-        mapX: String(booth?.mapX ?? 50),
-        mapY: String(booth?.mapY ?? 50),
       }),
     [booth, visible],
   );
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((current) => ({ ...current, [key]: value }));
   function submit() {
-    if (!form.companyName.trim() || !form.boothNo.trim()) return;
-    onSave(
-      {
-        ...form,
-        mapX: Math.min(100, Math.max(0, Number(form.mapX) || 0)),
-        mapY: Math.min(100, Math.max(0, Number(form.mapY) || 0)),
-      },
-      booth?.id,
-    );
+    if (!form.companyName.trim()) return;
+    // Stand no, bölge ve kroki konumu burada değil, Harita Yönetimi > Kroki
+    // ekranından atanıyor (bkz. AdminMapManagement). Bu formdan gelen veri
+    // store'da mevcut stant kaydıyla birleştirildiği için (saveBooth), o
+    // alanlar burada gönderilmese de korunuyor.
+    onSave(form, booth?.id);
     onClose();
   }
   return (
     <BaseModal
       visible={visible}
       title={booth ? 'Standı Düzenle' : 'Yeni Stand'}
-      subtitle="Firma, iletişim ve harita konumunu yönetin."
+      subtitle="Firma ve iletişim bilgilerini yönetin."
       onClose={onClose}
       footer={
         <FooterButtons
@@ -444,23 +434,17 @@ export function BoothEditorModal({
         />
       }
     >
-      <View style={styles.twoCol}>
-        <View style={styles.flex}>
-          <Field
-            label="Stand no *"
-            value={form.boothNo}
-            onChangeText={(v) => set('boothNo', v)}
-            placeholder="A-101"
-          />
-        </View>
-        <View style={styles.flex}>
-          <Choices
-            label="Bölge"
-            value={form.zone}
-            options={['Zone A', 'Zone B', 'Zone C', 'Zone D']}
-            onChange={(v) => set('zone', v)}
-          />
-        </View>
+      <View style={styles.placementNote}>
+        <Text style={styles.placementNoteLabel}>KROKİ KONUMU</Text>
+        <Text style={styles.placementNoteValue}>
+          {booth && isBoothPlaced(booth)
+            ? `${booth.boothNo} · ${booth.zone} · X %${booth.mapX} · Y %${booth.mapY}`
+            : 'Henüz yerleştirilmedi'}
+        </Text>
+        <Text style={styles.placementNoteHint}>
+          Stand no ve konum, Harita Yönetimi &gt; Kroki ekranından atanır — bölgeye göre otomatik
+          numaralandırılır (örn. Zone A'daki ilk stant A101).
+        </Text>
       </View>
       <Field
         label="Şirket adı *"
@@ -514,24 +498,6 @@ export function BoothEditorModal({
         onChangeText={(v) => set('qrCodeUrl', v)}
         keyboardType="url"
       />
-      <View style={styles.twoCol}>
-        <View style={styles.flex}>
-          <Field
-            label="Harita X (%)"
-            value={form.mapX}
-            onChangeText={(v) => set('mapX', v)}
-            keyboardType="numeric"
-          />
-        </View>
-        <View style={styles.flex}>
-          <Field
-            label="Harita Y (%)"
-            value={form.mapY}
-            onChangeText={(v) => set('mapY', v)}
-            keyboardType="numeric"
-          />
-        </View>
-      </View>
     </BaseModal>
   );
 }
@@ -552,21 +518,19 @@ export function StageEditorModal({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<AdminStage['type']>('Main Stage');
-  const [zone, setZone] = useState<AdminStage['zone']>('Zone A');
   const [capacity, setCapacity] = useState('500');
   const [status, setStatus] = useState<AdminStage['status']>('active');
   useEffect(() => {
     setName(stage?.name || '');
     setDescription(stage?.description || '');
     setType(stage?.type || 'Main Stage');
-    setZone(stage?.zone || 'Zone A');
     setCapacity(String(stage?.capacity || 500));
     setStatus(stage?.status || 'active');
   }, [stage, visible]);
   function submit() {
     if (!name.trim()) return;
     onSave(
-      { name: name.trim(), description, type, zone, capacity: Number(capacity) || 0, status },
+      { name: name.trim(), description, type, capacity: Number(capacity) || 0, status },
       stage?.id,
     );
     onClose();
@@ -586,6 +550,18 @@ export function StageEditorModal({
         />
       }
     >
+      <View style={styles.placementNote}>
+        <Text style={styles.placementNoteLabel}>KROKİ KONUMU</Text>
+        <Text style={styles.placementNoteValue}>
+          {stage
+            ? `${stage.zone} · X %${stage.mapX} · Y %${stage.mapY}`
+            : 'Kaydedince merkeze eklenir'}
+        </Text>
+        <Text style={styles.placementNoteHint}>
+          Konum ve bölge, Harita Yönetimi ekranından krokiye dokunarak ayarlanır — bölge, dokunulan
+          noktaya göre otomatik belirlenir.
+        </Text>
+      </View>
       <Field label="Alan adı *" value={name} onChangeText={setName} />
       <Field label="Açıklama" value={description} onChangeText={setDescription} multiline />
       <Choices
@@ -602,12 +578,6 @@ export function StageEditorModal({
           'Diğer',
         ]}
         onChange={setType}
-      />
-      <Choices
-        label="Bölge"
-        value={zone}
-        options={['Zone A', 'Zone B', 'Zone C', 'Zone D']}
-        onChange={setZone}
       />
       <Choices
         label="Durum"
@@ -1285,6 +1255,18 @@ const styles = StyleSheet.create({
   choiceTextActive: { color: colors.white },
   twoCol: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   flex: { flex: 1 },
+  placementNote: {
+    gap: 4,
+    padding: 12,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceMuted,
+  },
+  placementNoteLabel: { color: colors.textMuted, fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
+  placementNoteValue: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  placementNoteHint: { color: colors.textFaint, fontSize: 10, lineHeight: 14, marginTop: 2 },
   helper: { marginTop: -10, color: colors.textFaint, fontSize: 11 },
   saveButton: {
     minHeight: 42,
