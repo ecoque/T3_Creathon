@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import {
   Bookmark,
@@ -25,6 +25,8 @@ import { ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
 import { venuePoints } from '../../constants/venuePoints';
 import { rankSessionsForProfile } from '../../features/agenda/sessionRecommendations';
+import { useEventSessions } from '../../features/agenda/useEventSessions';
+import { VisitorEventsScreen } from '../../features/visitor/VisitorEventsScreen';
 import { localizeMatchReasons, rankMatches } from '../../features/matching/scoring';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useCorporateOpportunities } from '../../lib/useCorporateOpportunities';
@@ -32,23 +34,12 @@ import { useMeetingRequests } from '../../lib/useMeetingRequests';
 import type { MeetingRequestItem } from '../../lib/useMeetingRequests';
 import { useOtherProfiles } from '../../lib/useOtherProfiles';
 import { useSessionBookmarks, useToggleSessionBookmark } from '../../lib/useSessionBookmarks';
-import { supabase } from '../../lib/supabase';
 import type { Profile, Session } from '../../types';
 
 // Ardışık iki ajanda öğesi arasında bu kadar (ms) boşluk varsa, o aralığa
 // bir eşleştirme önerisi düşürülür.
 const GAP_SUGGESTION_THRESHOLD_MS = 60 * 60 * 1000;
 const EMPTY_SESSION_BOOKMARKS = new Set<string>();
-
-async function fetchSessions(): Promise<Session[]> {
-  const { data, error } = await supabase
-    .from('sessions')
-    .select('*')
-    .in('status', ['published', 'live', 'delayed', 'completed'])
-    .order('start_time', { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as Session[];
-}
 
 function dayKey(date: Date) {
   return date.toDateString();
@@ -72,6 +63,19 @@ function addMonths(date: Date, amount: number) {
 
 function isSameDay(a: Date, b: Date) {
   return dayKey(a) === dayKey(b);
+}
+
+function messageFromError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (
+    typeof error === 'object'
+    && error !== null
+    && 'message' in error
+    && typeof error.message === 'string'
+  ) {
+    return error.message;
+  }
+  return '';
 }
 
 // Pazartesi başlangıçlı hafta.
@@ -111,18 +115,21 @@ type AgendaEntry =
   | { kind: 'meeting'; id: string; start: Date; end: Date; meeting: MeetingRequestItem }
   | { kind: 'suggestion'; id: string; start: Date; end: Date; profile: Profile; score: number; reasons: string[] };
 
-export default function HomeScreen() {
+function ParticipantHomeScreen() {
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const dateLocale = i18n.language?.toLowerCase().startsWith('en') ? 'en-US' : 'tr-TR';
   const { data: meResult } = useCurrentProfile();
   const myProfile = meResult?.profile ?? null;
   const isCorporate = myProfile?.role === 'kurum';
+  const isVisitor = myProfile?.role === 'ziyaretci';
   const corporateOpportunities = useCorporateOpportunities(meResult?.userId, isCorporate);
-  const { data: sessions = [] } = useQuery({ queryKey: ['sessions'], queryFn: fetchSessions });
-  const { data: meetingResult } = useMeetingRequests();
+  const { data: sessions = [] } = useEventSessions();
+  const { data: meetingResult } = useMeetingRequests({ enabled: !!myProfile && !isVisitor });
   const meetingItems = useMemo(() => meetingResult?.items ?? [], [meetingResult?.items]);
-  const { data: otherProfiles = [] } = useOtherProfiles();
+  // Visitors plan their event program; their home agenda does not need the
+  // participant query used for networking-gap recommendations.
+  const { data: otherProfiles = [] } = useOtherProfiles({ enabled: !!myProfile && !isVisitor });
   const bookmarkQuery = useSessionBookmarks();
   const bookmarks = bookmarkQuery.data ?? EMPTY_SESSION_BOOKMARKS;
   const toggleBookmarkMutation = useToggleSessionBookmark();
@@ -160,7 +167,7 @@ export default function HomeScreen() {
 
     // Reddedilen talepler ajandaya girmez; bekleyen ve kabul edilen toplantılar
     // (girilen/katılınacak toplantılar) programla birlikte gösterilir.
-    const meetingEntries: AgendaEntry[] = meetingItems
+    const meetingEntries: AgendaEntry[] = (isVisitor ? [] : meetingItems)
       .filter((m) => m.status !== 'rejected' && !!m.proposed_time)
       .map((m) => {
         const start = new Date(m.proposed_time as string);
@@ -174,7 +181,7 @@ export default function HomeScreen() {
       });
 
     return [...sessionEntries, ...meetingEntries].sort((a, b) => a.start.getTime() - b.start.getTime());
-  }, [sessions, meetingItems]);
+  }, [sessions, meetingItems, isVisitor]);
 
   const recommendedSessions = useMemo(() => {
     if (!myProfile) return [];
@@ -295,7 +302,7 @@ export default function HomeScreen() {
   }, [meetingItems]);
 
   const availableCandidates = useMemo(() => {
-    if (!myProfile) return [];
+    if (!myProfile || isVisitor) return [];
     return rankMatches(myProfile, otherProfiles)
       .filter(
         (candidate) =>
@@ -307,7 +314,7 @@ export default function HomeScreen() {
         ...candidate,
         reasons: localizeMatchReasons(candidate, t),
       }));
-  }, [myProfile, otherProfiles, engagedUserIds, t]);
+  }, [myProfile, otherProfiles, engagedUserIds, isVisitor, t]);
 
   // Görüntülenen günde ardışık iki öğe arasında 1 saat veya daha uzun boşluk
   // varsa, aynı gün içinde daha önce önerilmemiş en uygun kişiyi o boşluğa düşürür.
@@ -348,7 +355,11 @@ export default function HomeScreen() {
       { sessionId: id, bookmarked: bookmarks.has(id) },
       {
         onError: (mutationError) => {
-          const conflict = mutationError instanceof Error && mutationError.message.includes('overlaps');
+          // PostgREST errors are object-shaped in some React Native runtimes,
+          // rather than `instanceof Error`. Keep the conflict guidance intact
+          // for every active role, including visitors planning their agenda.
+          const message = messageFromError(mutationError).toLowerCase();
+          const conflict = message.includes('overlap') || message.includes('çakış');
           Alert.alert(t('home.smartAgendaTitle'), t(conflict ? 'home.bookmarkConflictError' : 'home.bookmarkSyncError'));
         },
       },
@@ -407,7 +418,7 @@ export default function HomeScreen() {
               <Text style={styles.smartAgendaHint}>
                 {t('home.smartAgendaHint')}
               </Text>
-              {pendingIncomingCount > 0 ? (
+              {!isVisitor && pendingIncomingCount > 0 ? (
                 <Pressable onPress={() => router.push('/(tabs)/meetings')}>
                   <Text style={styles.smartAgendaAction}>
                     {t('home.pendingMeetingAction', { count: pendingIncomingCount })}
@@ -794,36 +805,51 @@ export default function HomeScreen() {
 
       <NotificationsModal visible={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
 
-      <WhyMatchModal
-        visible={!!whyMatchProfile}
-        onClose={() => setWhyMatchProfile(null)}
-        profile={whyMatchProfile}
-        score={
-          whyMatchProfile ? availableCandidates.find((c) => c.profile.id === whyMatchProfile.id)?.score ?? 0 : 0
-        }
-        reasons={
-          whyMatchProfile ? availableCandidates.find((c) => c.profile.id === whyMatchProfile.id)?.reasons ?? [] : []
-        }
-        isConnected={whyMatchProfile ? connectedIds.has(whyMatchProfile.user_id) : false}
-        onConnect={() => whyMatchProfile && toggleConnect(whyMatchProfile.user_id)}
-        onRequestMeeting={() => {
-          setScheduleFor(whyMatchProfile);
-          setScheduleOpen(true);
-        }}
-      />
+      {!isVisitor ? (
+        <>
+          <WhyMatchModal
+            visible={!!whyMatchProfile}
+            onClose={() => setWhyMatchProfile(null)}
+            profile={whyMatchProfile}
+            score={
+              whyMatchProfile ? availableCandidates.find((c) => c.profile.id === whyMatchProfile.id)?.score ?? 0 : 0
+            }
+            reasons={
+              whyMatchProfile ? availableCandidates.find((c) => c.profile.id === whyMatchProfile.id)?.reasons ?? []
+              : []
+            }
+            isConnected={whyMatchProfile ? connectedIds.has(whyMatchProfile.user_id) : false}
+            onConnect={() => whyMatchProfile && toggleConnect(whyMatchProfile.user_id)}
+            onRequestMeeting={() => {
+              setScheduleFor(whyMatchProfile);
+              setScheduleOpen(true);
+            }}
+          />
 
-      <ScheduleMeetingModal
-        visible={scheduleOpen}
-        onClose={() => {
-          setScheduleOpen(false);
-          setScheduleFor(null);
-        }}
-        participants={otherProfiles}
-        preSelectedUserId={scheduleFor?.user_id}
-        onCreated={() => queryClient.invalidateQueries({ queryKey: ['meeting_requests'] })}
-      />
+          <ScheduleMeetingModal
+            visible={scheduleOpen}
+            onClose={() => {
+              setScheduleOpen(false);
+              setScheduleFor(null);
+            }}
+            participants={otherProfiles}
+            preSelectedUserId={scheduleFor?.user_id}
+            onCreated={() => queryClient.invalidateQueries({ queryKey: ['meeting_requests'] })}
+          />
+        </>
+      ) : null}
     </View>
   );
+}
+
+export default function HomeScreen() {
+  const { data: meResult } = useCurrentProfile();
+
+  if (meResult?.profile?.role === 'ziyaretci') {
+    return <VisitorEventsScreen />;
+  }
+
+  return <ParticipantHomeScreen />;
 }
 
 const styles = StyleSheet.create({

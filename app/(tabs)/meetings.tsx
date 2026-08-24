@@ -49,14 +49,15 @@ export default function MeetingsScreen() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: meResult } = useCurrentProfile();
-  const { data } = useMeetingRequests();
+  const canCreateMeeting = !!meResult?.profile && meResult.profile.role !== 'ziyaretci';
+  const { data } = useMeetingRequests({ enabled: canCreateMeeting });
   const items = data?.items ?? [];
   const meetingNotes = useMeetingNotes(data?.userId);
 
   const { data: allParticipants = [] } = useQuery({
     queryKey: ['profiles', 'others', meResult?.userId],
     queryFn: () => fetchAllProfiles(meResult!.userId),
-    enabled: !!meResult?.userId,
+    enabled: !!meResult?.userId && canCreateMeeting,
   });
   const activeParticipants = allParticipants.filter((profile) => profile.status === 'active');
   const meetingCandidates = meResult?.profile?.role === 'girisimci'
@@ -114,10 +115,12 @@ export default function MeetingsScreen() {
                 <Text style={styles.title}>{t('meetings.title')}</Text>
                 <Text style={styles.subtitle}>{t('meetings.subtitle')}</Text>
               </View>
-              <Pressable style={styles.newRequestBtn} onPress={() => setScheduleOpen(true)}>
-                <Plus size={15} color={colors.white} />
-                <Text style={styles.newRequestBtnText}>{t('meetings.newRequest')}</Text>
-              </Pressable>
+              {canCreateMeeting ? (
+                <Pressable style={styles.newRequestBtn} onPress={() => setScheduleOpen(true)}>
+                  <Plus size={15} color={colors.white} />
+                  <Text style={styles.newRequestBtnText}>{t('meetings.newRequest')}</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             <View style={styles.segmentRow}>

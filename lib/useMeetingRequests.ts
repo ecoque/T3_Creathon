@@ -42,12 +42,12 @@ async function fetchMeetingRequests(userId: string): Promise<{ userId: string; i
   return { userId, items };
 }
 
-export function useMeetingRequests() {
+export function useMeetingRequests(options?: { enabled?: boolean }) {
   const { data: meResult } = useCurrentProfile();
   return useQuery({
     queryKey: ['meeting_requests', meResult?.userId],
     queryFn: () => fetchMeetingRequests(meResult!.userId),
-    enabled: !!meResult?.userId,
+    enabled: !!meResult?.userId && (options?.enabled ?? true),
     staleTime: 15_000,
   });
 }

@@ -1,9 +1,10 @@
 import { Bell, Calendar, MessageSquare, Sparkles, X } from 'lucide-react-native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { colors } from '../../constants/theme';
+import { useCurrentProfile } from '../../lib/useCurrentProfile';
 
 type NotificationsModalProps = {
   visible: boolean;
@@ -14,13 +15,23 @@ type NotificationsModalProps = {
 // henüz bir "notification_settings" tablosu yok.
 export function NotificationsModal({ visible, onClose }: NotificationsModalProps) {
   const { t } = useTranslation();
+  const { data: meResult } = useCurrentProfile();
+  const isVisitor = meResult?.profile?.role === 'ziyaretci';
   const [meetingAlerts, setMeetingAlerts] = useState(true);
   const [sessionReminders, setSessionReminders] = useState(true);
   const [aiMatches, setAiMatches] = useState(true);
   const [announcements, setAnnouncements] = useState(false);
 
+  // Preferences are currently local UI state only. When a visitor profile is
+  // resolved, ensure event announcements start enabled without changing the
+  // defaults of the networking roles.
+  useEffect(() => {
+    if (isVisitor) setAnnouncements(true);
+  }, [isVisitor]);
+
   const rows = [
     {
+      id: 'meetings',
       icon: Calendar,
       title: t('modals.notifMeetings'),
       desc: t('modals.notifMeetingsDesc'),
@@ -28,6 +39,7 @@ export function NotificationsModal({ visible, onClose }: NotificationsModalProps
       onChange: setMeetingAlerts,
     },
     {
+      id: 'sessions',
       icon: Bell,
       title: t('modals.notifSessions'),
       desc: t('modals.notifSessionsDesc'),
@@ -35,6 +47,7 @@ export function NotificationsModal({ visible, onClose }: NotificationsModalProps
       onChange: setSessionReminders,
     },
     {
+      id: 'matches',
       icon: Sparkles,
       title: t('modals.notifMatches'),
       desc: t('modals.notifMatchesDesc'),
@@ -42,13 +55,14 @@ export function NotificationsModal({ visible, onClose }: NotificationsModalProps
       onChange: setAiMatches,
     },
     {
+      id: 'announcements',
       icon: MessageSquare,
       title: t('modals.notifAnnouncements'),
       desc: t('modals.notifAnnouncementsDesc'),
       value: announcements,
       onChange: setAnnouncements,
     },
-  ];
+  ].filter((row) => !isVisitor || (row.id !== 'meetings' && row.id !== 'matches'));
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -69,7 +83,7 @@ export function NotificationsModal({ visible, onClose }: NotificationsModalProps
 
           <View style={styles.body}>
             {rows.map((row) => (
-              <View key={row.title} style={styles.row}>
+              <View key={row.id} style={styles.row}>
                 <View style={{ flexDirection: 'row', gap: 8, flex: 1 }}>
                   <row.icon size={15} color={colors.primary} />
                   <View style={{ flex: 1, gap: 2 }}>

@@ -20,13 +20,14 @@ import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useInvestorCoreFlow } from '../../lib/useInvestorCoreFlow';
 import { useOtherProfiles } from '../../lib/useOtherProfiles';
 import type { ParticipantRole, Profile } from '../../types';
+import { VisitorAgendaScreen } from '../../features/visitor/VisitorAgendaScreen';
 
 function initialsFor(name?: string) {
   if (!name) return '?';
   return name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('');
 }
 
-export default function DiscoverScreen() {
+function ParticipantDiscoverScreen() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: meResult } = useCurrentProfile();
@@ -480,6 +481,12 @@ export default function DiscoverScreen() {
       <NotificationsModal visible={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
     </View>
   );
+}
+
+export default function DiscoverScreen() {
+  const { data: meResult } = useCurrentProfile();
+  if (meResult?.profile?.role === 'ziyaretci') return <VisitorAgendaScreen />;
+  return <ParticipantDiscoverScreen />;
 }
 
 const styles = StyleSheet.create({

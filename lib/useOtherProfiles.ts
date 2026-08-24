@@ -16,11 +16,11 @@ async function fetchOtherProfiles(myUserId: string): Promise<Profile[]> {
 
 // Keşfet ve Ajanda ekranları aynı "diğer katılımcılar" sorgusunu paylaşır,
 // böylece ikisi de aynı React Query cache'ini kullanır.
-export function useOtherProfiles() {
+export function useOtherProfiles(options?: { enabled?: boolean }) {
   const { data: meResult } = useCurrentProfile();
   return useQuery({
     queryKey: ['profiles', 'others', meResult?.userId],
     queryFn: () => fetchOtherProfiles(meResult!.userId),
-    enabled: !!meResult?.userId,
+    enabled: !!meResult?.userId && (options?.enabled ?? true),
   });
 }

@@ -20,9 +20,9 @@ function SessionGate({ children }: { children: ReactNode }) {
   const [checked, setChecked] = useState(false);
   const checking = useRef(false);
   const mounted = useRef(true);
-  const firstSegment = segments[0] || 'index';
-  const segmentRef = useRef(firstSegment);
-  segmentRef.current = firstSegment;
+  const routeKey = segments.join('/');
+  const routeRef = useRef(routeKey);
+  routeRef.current = routeKey;
 
   const validate = useCallback(async () => {
     if (!navigationState?.key || checking.current) return;
@@ -31,15 +31,16 @@ function SessionGate({ children }: { children: ReactNode }) {
       const { data, error } = await supabase.auth.getSession();
       if (error) throw error;
       const session = data.session;
-      const route = segmentRef.current;
+      const route = routeRef.current;
+      const topLevelRoute = route.split('/')[0] || 'index';
       if (!session) {
-        if (route !== 'auth') router.replace('/auth');
+        if (topLevelRoute !== 'auth') router.replace('/auth');
         return;
       }
 
       const admin = await isAdminUser(session.user.id);
       if (admin) {
-        if (route === 'auth' || route === 'onboarding' || route === 'index') {
+        if (topLevelRoute === 'auth' || topLevelRoute === 'onboarding' || topLevelRoute === 'index') {
           router.replace('/admin');
         }
         return;
@@ -53,10 +54,25 @@ function SessionGate({ children }: { children: ReactNode }) {
         return;
       }
       if (!profile) {
-        if (route !== 'onboarding') router.replace('/onboarding');
+        if (topLevelRoute !== 'onboarding') router.replace('/onboarding');
         return;
       }
-      if (route === 'admin' || route === 'auth' || route === 'onboarding' || route === 'index') {
+      // The visitor tab reuses the discover route as the read-only Ajandam
+      // screen. Keep that exact tab route accessible, while still redirecting
+      // any other discover/meeting path away from visitor-only navigation.
+      const isVisitorAgendaRoute = route === '(tabs)/discover';
+      if (
+        profile.role === 'ziyaretci'
+        && (route.includes('meetings') || (route.includes('discover') && !isVisitorAgendaRoute))
+      ) {
+        router.replace('/(tabs)/home');
+        return;
+      }
+      if (profile.role !== 'ziyaretci' && route.includes('events')) {
+        router.replace('/(tabs)/home');
+        return;
+      }
+      if (topLevelRoute === 'admin' || topLevelRoute === 'auth' || topLevelRoute === 'onboarding' || topLevelRoute === 'index') {
         router.replace('/(tabs)/home');
       }
     } catch {
@@ -70,7 +86,7 @@ function SessionGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void validate();
-  }, [firstSegment, validate]);
+  }, [routeKey, validate]);
 
   useEffect(() => {
     mounted.current = true;
