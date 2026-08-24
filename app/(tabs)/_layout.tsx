@@ -1,10 +1,11 @@
 import { Tabs } from 'expo-router';
-import { Calendar, Compass, Handshake, Map, User } from 'lucide-react-native';
+import { Calendar, CalendarDays, Compass, FolderKanban, Handshake, Map, User } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors } from '../../constants/theme';
+import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useMeetingRequests } from '../../lib/useMeetingRequests';
 
 function MeetingsIcon({ color, size }: { color: string; size: number }) {
@@ -27,6 +28,10 @@ function MeetingsIcon({ color, size }: { color: string; size: number }) {
 export default function TabsLayout() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const { data: meResult } = useCurrentProfile();
+  const role = meResult?.profile?.role;
+  const isCorporate = role === 'kurum';
+  const isVisitor = role === 'ziyaretci';
 
   return (
     <Tabs
@@ -62,6 +67,22 @@ export default function TabsLayout() {
         options={{
           title: t('meetings.title'),
           tabBarIcon: ({ color, size }) => <MeetingsIcon color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="opportunities"
+        options={{
+          title: t('corporate.opportunitiesTitle', 'Fırsatlar'),
+          tabBarIcon: ({ color, size }) => <FolderKanban color={color} size={size} />,
+          href: isCorporate ? undefined : null,
+        }}
+      />
+      <Tabs.Screen
+        name="events"
+        options={{
+          title: t('visitorProgram.eventsTab', 'Program'),
+          tabBarIcon: ({ color, size }) => <CalendarDays color={color} size={size} />,
+          href: isVisitor ? undefined : null,
         }}
       />
       <Tabs.Screen

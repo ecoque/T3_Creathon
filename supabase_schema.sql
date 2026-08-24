@@ -1,5 +1,27 @@
 -- TakeOff Companion App — ilk veri modeli
 -- Supabase Dashboard > SQL Editor içine yapıştırıp "Run" ile çalıştır.
+--
+-- NOT (integration branch birleştirmesi): Bu dosya, canlı veritabanının kurulduğu
+-- "sıfırdan kurulum" temel şemasıdır ve içeriği kerimyedek/master ile aynı
+-- tablolara sahiptir (sadece users/meetings/checkins RLS politikaları ozge ve
+-- nisa1 branch'lerindeki güvenlik sıkılaştırmasıyla güncellendi, bkz. aşağıdaki
+-- RLS bölümü). ozge ve nisa1'in eklediği YENİ tablo/kolonlar canlı DB zaten
+-- kurulu olduğu için burada yeniden CREATE TABLE ile ifade edilmiyor; bunun
+-- yerine repo kökündeki idempotent (add column if not exists / create table if
+-- not exists) migration dosyalarıyla uygulanmalı, önerilen sıra:
+--   1) supabase_admin_migration.sql
+--   2) supabase_admin_workspace_migration.sql
+--   3) supabase_floor_plan_migration.sql
+--   4) supabase_floor_plan_walls_migration.sql
+--   5) supabase_stand_grid_migration.sql
+--   6) supabase_zone_geofence_migration.sql
+--   7) supabase_location_pings_delete_migration.sql
+--   8) supabase_investor_core_flow_migration.sql
+--   9) supabase_entrepreneur_core_flow_migration.sql
+--   10) supabase_corporate_core_flow_migration.sql
+-- Tüm migrationlar idempotent'tir (if not exists / create or replace), bu yüzden
+-- bu sıradan sapma veya birden fazla çalıştırma güvenlidir. Tam ALTER/CREATE
+-- listesi için entegrasyon raporuna bakın.
 
 -- 1) auth.users'a bağlı uygulama kullanıcı kaydı (is_admin bayrağı burada)
 create table public.users (
@@ -117,12 +139,22 @@ create table public.location_pings (
 );
 
 -- ── RLS politikaları ──────────────────────────────────────────────
--- "Enable automatic RLS" açık olduğu için her tabloda RLS zaten aktif;
--- policy eklenmezse tablo tamamen erişime kapalı kalır.
+-- SQL Editor üzerinden oluşturulan tablolarda RLS otomatik açılmadığı için burada
+-- açıkça etkinleştirilir. Policy eklenmezse tablo tamamen erişime kapalı kalır.
+alter table public.users enable row level security;
+alter table public.profiles enable row level security;
+alter table public.sessions enable row level security;
+alter table public.meeting_requests enable row level security;
+alter table public.badges enable row level security;
+alter table public.zones enable row level security;
+alter table public.stands enable row level security;
+alter table public.checkins enable row level security;
+alter table public.location_pings enable row level security;
 
--- users: herkes (giriş yapmış) temel profilleri görebilsin, kendi satırını güncelleyebilsin
-create policy "users_select_all" on public.users for select to authenticated using (true);
-create policy "users_update_self" on public.users for update to authenticated using (auth.uid() = id);
+-- users: e-posta ve admin bayrağı yalnızca satırın sahibi veya admin tarafından okunur.
+-- İstemciye update izni verilmez; aksi durumda kullanıcı kendi is_admin değerini açabilir.
+create policy "users_select_self_or_admin" on public.users for select to authenticated
+  using (auth.uid() = id or public.is_admin());
 
 -- profiles: eşleştirme/keşif için herkes görebilir, sadece kendi profilini yazabilir
 create policy "profiles_select_all" on public.profiles for select to authenticated using (true);
@@ -140,6 +172,8 @@ create policy "meetings_insert_own" on public.meeting_requests for insert to aut
   with check (auth.uid() = from_user_id);
 create policy "meetings_update_participant" on public.meeting_requests for update to authenticated
   using (auth.uid() = from_user_id or auth.uid() = to_user_id);
+create policy "meetings_admin_select" on public.meeting_requests for select to authenticated
+  using (public.is_admin());
 
 -- badges: sadece kendi rozetlerini görebilirsin (kazanım sunucu tarafında/service role ile yazılır)
 create policy "badges_select_own" on public.badges for select to authenticated using (auth.uid() = user_id);
@@ -153,6 +187,7 @@ create policy "stands_admin_write" on public.stands for all to authenticated usi
 -- checkins: sadece kendi check-in'lerini yazabilir/görebilirsin
 create policy "checkins_select_own" on public.checkins for select to authenticated using (auth.uid() = user_id);
 create policy "checkins_insert_own" on public.checkins for insert to authenticated with check (auth.uid() = user_id);
+create policy "checkins_admin_select" on public.checkins for select to authenticated using (public.is_admin());
 
 -- location_pings: sadece kendi ping'lerini yazabilir/görebilirsin
 create policy "pings_select_own" on public.location_pings for select to authenticated using (auth.uid() = user_id);

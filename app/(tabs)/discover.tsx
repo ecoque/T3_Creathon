@@ -12,7 +12,7 @@ import { ScheduleMeetingModal } from '../../components/modals/ScheduleMeetingMod
 import { WhyMatchModal } from '../../components/modals/WhyMatchModal';
 import { ROLES, ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
-import { computeMatchScore } from '../../features/matching/scoring';
+import { computeMatchScore, localizeMatchReasons } from '../../features/matching/scoring';
 import { supabase } from '../../lib/supabase';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import type { ParticipantRole, Profile } from '../../types';
@@ -278,7 +278,14 @@ export default function DiscoverScreen() {
         onClose={() => setWhyMatchProfile(null)}
         profile={whyMatchProfile}
         score={whyMatchProfile ? scored.find((s) => s.profile.id === whyMatchProfile.id)?.score ?? 0 : 0}
-        reasons={whyMatchProfile ? scored.find((s) => s.profile.id === whyMatchProfile.id)?.reasons ?? [] : []}
+        reasons={
+          whyMatchProfile
+            ? localizeMatchReasons(
+                scored.find((s) => s.profile.id === whyMatchProfile.id) ?? { score: 0, reasons: [] },
+                (key, params) => t(key, params),
+              )
+            : []
+        }
         isConnected={whyMatchProfile ? connectedIds.has(whyMatchProfile.user_id) : false}
         onConnect={() => whyMatchProfile && toggleConnect(whyMatchProfile.user_id)}
         onRequestMeeting={() => {

@@ -10,6 +10,7 @@ import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { SessionDetailModal } from '../../components/modals/SessionDetailModal';
 import { colors } from '../../constants/theme';
 import { venuePoints } from '../../constants/venuePoints';
+import { VisitorAgendaScreen } from '../../features/visitor/VisitorAgendaScreen';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { supabase } from '../../lib/supabase';
 import type { Session } from '../../types';
@@ -27,7 +28,13 @@ function dayKey(iso: string) {
 export default function HomeScreen() {
   const { t } = useTranslation();
   const { data: meResult } = useCurrentProfile();
-  const { data: sessions = [] } = useQuery({ queryKey: ['sessions'], queryFn: fetchSessions });
+
+  // Ziyaretçi rolü, veritabanına kalıcı olarak yazılan (useSessionBookmarks)
+  // kişisel program/ajanda akışını kullanır (bkz. features/visitor/VisitorAgendaScreen).
+  // Diğer roller (girişimci/yatırımcı/kurum) için aşağıdaki genel ajanda kullanılmaya devam eder.
+  const isVisitor = meResult?.profile?.role === 'ziyaretci';
+
+  const { data: sessions = [] } = useQuery({ queryKey: ['sessions'], queryFn: fetchSessions, enabled: !isVisitor });
 
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -90,6 +97,10 @@ export default function HomeScreen() {
 
   const firstName = meResult?.profile?.full_name?.split(' ')[0] ?? '';
   const bookmarkedToday = visibleSessions.filter((s) => bookmarks.has(s.id)).length;
+
+  if (isVisitor) {
+    return <VisitorAgendaScreen />;
+  }
 
   return (
     <View style={styles.screen}>

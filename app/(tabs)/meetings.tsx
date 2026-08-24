@@ -1,15 +1,17 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Check, Clock, MapPin, Plus, X } from 'lucide-react-native';
+import { Calendar, Check, Clock, FileText, MapPin, Plus, X } from 'lucide-react-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppHeader } from '../../components/AppHeader';
+import { MeetingNoteModal } from '../../components/modals/MeetingNoteModal';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { ScheduleMeetingModal } from '../../components/modals/ScheduleMeetingModal';
 import { colors } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
+import { useMeetingNotes } from '../../lib/useMeetingNotes';
 import { useMeetingRequests, type MeetingRequestItem } from '../../lib/useMeetingRequests';
 import type { MeetingStatus, Profile } from '../../types';
 
@@ -57,6 +59,8 @@ export default function MeetingsScreen() {
   const [tab, setTab] = useState<'incoming' | 'outgoing'>('incoming');
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [noteTarget, setNoteTarget] = useState<MeetingRequestItem | null>(null);
+  const notes = useMeetingNotes(meResult?.userId);
 
   const incoming = items.filter((m) => m.direction === 'incoming');
   const outgoing = items.filter((m) => m.direction === 'outgoing');
@@ -175,6 +179,16 @@ export default function MeetingsScreen() {
               <View style={styles.acceptedRow}>
                 <Check size={13} color={colors.success} />
                 <Text style={styles.acceptedText}>{t('meetings.acceptedNote')}</Text>
+                <Pressable
+                  style={styles.noteBtn}
+                  onPress={() => setNoteTarget(item)}
+                  hitSlop={8}
+                >
+                  <FileText size={13} color={colors.primary} />
+                  <Text style={styles.noteBtnText}>
+                    {notes.byMeetingId.has(item.id) ? t('entrepreneur.editNote') : t('entrepreneur.addNote')}
+                  </Text>
+                </Pressable>
               </View>
             ) : null}
           </View>
@@ -189,6 +203,18 @@ export default function MeetingsScreen() {
       />
 
       <NotificationsModal visible={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
+
+      <MeetingNoteModal
+        visible={noteTarget !== null}
+        participantName={noteTarget?.otherProfile?.full_name ?? ''}
+        initialNote={noteTarget ? notes.byMeetingId.get(noteTarget.id)?.note ?? '' : ''}
+        saving={notes.isSaving}
+        onClose={() => setNoteTarget(null)}
+        onSave={async (note) => {
+          if (!noteTarget) return;
+          await notes.save({ meetingRequestId: noteTarget.id, note });
+        }}
+      />
     </View>
   );
 }
@@ -302,4 +328,11 @@ const styles = StyleSheet.create({
     borderTopColor: colors.background,
   },
   acceptedText: { fontSize: 12, fontWeight: '700', color: colors.success },
+  noteBtn: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  noteBtnText: { fontSize: 11, fontWeight: '700', color: colors.primary },
 });
