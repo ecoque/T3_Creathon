@@ -1,7 +1,4 @@
-import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
 import {
   Activity,
   Check,
@@ -659,6 +656,16 @@ export function AdminMapManagement({
   }
 
   async function handlePickFloorPlan() {
+    // Lazy require: bu native modül eski Dev Client build'lerinde bulunmayabilir
+    // (yeni eklendi, yeni build gerektirir). Statik import tüm dosyayı çökertir.
+    let ImagePicker: typeof import('expo-image-picker');
+    try {
+      ImagePicker = require('expo-image-picker');
+    } catch {
+      onNotify?.('Bu özellik için uygulamanın güncel bir build ile yeniden kurulması gerekiyor.');
+      return;
+    }
+
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
       onNotify?.('Kroki resmi seçmek için galeri izni gerekiyor.');
@@ -687,6 +694,16 @@ export function AdminMapManagement({
   }
 
   async function handleExportKroki() {
+    let Print: typeof import('expo-print');
+    let Sharing: typeof import('expo-sharing');
+    try {
+      Print = require('expo-print');
+      Sharing = require('expo-sharing');
+    } catch {
+      onNotify?.('Bu özellik için uygulamanın güncel bir build ile yeniden kurulması gerekiyor.');
+      return;
+    }
+
     setExporting(true);
     try {
       const html = buildKrokiHtml(zones, booths, stages, settings.floorPlanUrl, 'Take Off', settings.floorPlanWalls);
