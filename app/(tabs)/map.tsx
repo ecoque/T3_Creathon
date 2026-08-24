@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -17,12 +16,13 @@ import { Circle, Line, Polyline, Svg } from 'react-native-svg';
 
 import { AppHeader } from '../../components/AppHeader';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
+import { ZoomPanCanvas } from '../../components/ZoomPanCanvas';
 import { isStaffRole } from '../../constants/roles';
 import { colors } from '../../constants/theme';
-import { ZONE_COLORS, ZONE_LETTER, ZONE_ORDER, isBoothPlaced, zoneQuadrant } from '../../lib/boothGrid';
+import { ZONE_COLORS, ZONE_LETTER, ZONE_ORDER, isBoothPlaced, isStagePlaced, zoneQuadrant } from '../../lib/boothGrid';
+import { ENTRANCE_GATE_COLOR, ENTRANCE_GATE_LABEL, ENTRANCE_GATE_LINE, FLOOR_PLAN_ASPECT_RATIO } from '../../lib/floorPlanGrid';
 import { DEFAULT_WALL_THICKNESS, findRoute, type RouteObstacle, type RoutePoint } from '../../lib/routePlanner';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
-import { useImageAspectRatio } from '../../lib/useImageAspectRatio';
 import { useIsAdmin } from '../../lib/useIsAdmin';
 import { useVenueMap } from '../../lib/useVenueMap';
 import { WATER_STATION_STATUS_LABEL_KEY, useReportWaterStationEmpty, useWaterStations } from '../../lib/useWaterStations';
@@ -181,12 +181,6 @@ export default function MapScreen() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [pickerFor, setPickerFor] = useState<'start' | 'end' | null>(null);
 
-  const hasFloorPlan = !!data?.floorPlanUrl;
-  // Admin ekranıyla (AdminMapManagement.tsx) BİREBİR AYNI en-boy oranı —
-  // aksi halde aynı kroki fotoğrafı iki ekranda farklı kırpılır ve
-  // admin'in çizdiği duvarlar/pinler burada kaymış görünür.
-  const floorPlanAspectRatio = useImageAspectRatio(hasFloorPlan ? data?.floorPlanUrl : null);
-
   const locations = useMemo<LocationEntry[]>(() => {
     if (!data) return [];
     const boothEntries: LocationEntry[] = data.booths.filter(isBoothPlaced).map((booth) => ({
@@ -197,7 +191,7 @@ export default function MapScreen() {
       x: booth.mapX,
       y: booth.mapY,
     }));
-    const stageEntries: LocationEntry[] = data.stages.map((stage) => ({
+    const stageEntries: LocationEntry[] = data.stages.filter(isStagePlaced).map((stage) => ({
       key: `stage:${stage.id}`,
       type: 'stage' as const,
       label: stage.name,
@@ -223,7 +217,7 @@ export default function MapScreen() {
   useEffect(() => {
     if (!params.locationName || !data) return;
     const needle = params.locationName.toLocaleLowerCase('tr');
-    const stage = data.stages.find(
+    const stage = data.stages.filter(isStagePlaced).find(
       (item) =>
         item.name.toLocaleLowerCase('tr').includes(needle) ||
         needle.includes(item.name.toLocaleLowerCase('tr')),
@@ -320,7 +314,7 @@ export default function MapScreen() {
           />
           <LayerToggle
             active={layers.stages}
-            label={`${t('map.layerStages')} (${data?.stages.length || 0})`}
+            label={`${t('map.layerStages')} (${data?.stages.filter(isStagePlaced).length || 0})`}
             onPress={() => toggleLayer('stages')}
           />
           <LayerToggle
@@ -336,93 +330,126 @@ export default function MapScreen() {
               <ActivityIndicator color={colors.primary} />
             </View>
           ) : (
-            <View style={[styles.mapCanvas, { aspectRatio: floorPlanAspectRatio }]}>
-              {hasFloorPlan ? (
-                <Image
-                  source={{ uri: data?.floorPlanUrl }}
-                  resizeMode="contain"
-                  style={StyleSheet.absoluteFill}
-                />
-              ) : (
-                <View pointerEvents="none" style={styles.noFloorPlan}>
-                  <MapPin size={18} color={colors.textFaint} />
-                  <Text style={styles.noFloorPlanText}>{t('map.noFloorPlan')}</Text>
-                </View>
-              )}
+            <ZoomPanCanvas aspectRatio={FLOOR_PLAN_ASPECT_RATIO}>
+              <View style={styles.mapCanvas}>
+                <View pointerEvents="none" style={styles.centerDividerV} />
+                <View pointerEvents="none" style={styles.centerDividerH} />
 
-              <View pointerEvents="none" style={styles.centerDividerV} />
-              <View pointerEvents="none" style={styles.centerDividerH} />
+                {ZONE_ORDER.map((code) => {
+                  const { right, bottom } = zoneQuadrant(code);
+                  return (
+                    <View
+                      key={code}
+                      pointerEvents="none"
+                      style={[
+                        styles.zoneCornerTag,
+                        { backgroundColor: ZONE_COLORS[code] },
+                        right ? { right: 8 } : { left: 8 },
+                        bottom ? { bottom: 8 } : { top: 8 },
+                      ]}
+                    >
+                      <Text style={styles.zoneCornerTagText}>{ZONE_LETTER[code]}</Text>
+                    </View>
+                  );
+                })}
 
-              {ZONE_ORDER.map((code) => {
-                const { right, bottom } = zoneQuadrant(code);
-                return (
-                  <View
-                    key={code}
-                    pointerEvents="none"
-                    style={[
-                      styles.zoneCornerTag,
-                      { backgroundColor: ZONE_COLORS[code] },
-                      right ? { right: 8 } : { left: 8 },
-                      bottom ? { bottom: 8 } : { top: 8 },
-                    ]}
-                  >
-                    <Text style={styles.zoneCornerTagText}>{ZONE_LETTER[code]}</Text>
-                  </View>
-                );
-              })}
+                {data?.floorPlanWalls?.length ? (
+                  <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+                    {data.floorPlanWalls.map((wall) => (
+                      <Line
+                        key={wall.id}
+                        x1={wall.x1}
+                        y1={wall.y1}
+                        x2={wall.x2}
+                        y2={wall.y2}
+                        stroke="rgba(15,23,42,0.55)"
+                        strokeWidth={DEFAULT_WALL_THICKNESS}
+                        strokeLinecap="round"
+                      />
+                    ))}
+                  </Svg>
+                ) : null}
 
-              {data?.floorPlanWalls?.length ? (
+                {/* Sabit "giriş kapısı" işareti — admin tarafından taşınamaz/silinemez,
+                    krokinin her zaman aynı yerinde duran görsel bir referans (bkz.
+                    lib/floorPlanGrid.ts > ENTRANCE_GATE_LINE). Rota bulmaya dahil değil. */}
                 <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
-                  {data.floorPlanWalls.map((wall) => (
-                    <Line
-                      key={wall.id}
-                      x1={wall.x1}
-                      y1={wall.y1}
-                      x2={wall.x2}
-                      y2={wall.y2}
-                      stroke="rgba(15,23,42,0.55)"
-                      strokeWidth={DEFAULT_WALL_THICKNESS}
-                      strokeLinecap="round"
-                    />
-                  ))}
-                </Svg>
-              ) : null}
-
-              {routePoints && routePoints.length > 1 ? (
-                <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
-                  <Polyline
-                    points={routePoints.map((point) => `${point.x},${point.y}`).join(' ')}
-                    fill="none"
-                    stroke={colors.primary}
-                    strokeWidth={1.4}
+                  <Line
+                    x1={ENTRANCE_GATE_LINE.x1}
+                    y1={ENTRANCE_GATE_LINE.y1}
+                    x2={ENTRANCE_GATE_LINE.x2}
+                    y2={ENTRANCE_GATE_LINE.y2}
+                    stroke={ENTRANCE_GATE_COLOR}
+                    strokeWidth={2.2}
                     strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeDasharray="4,3"
-                  />
-                  <Circle
-                    cx={routePoints[0].x}
-                    cy={routePoints[0].y}
-                    r={2.4}
-                    fill={colors.success}
-                    stroke={colors.white}
-                    strokeWidth={0.7}
-                  />
-                  <Circle
-                    cx={routePoints[routePoints.length - 1].x}
-                    cy={routePoints[routePoints.length - 1].y}
-                    r={2.4}
-                    fill={colors.danger}
-                    stroke={colors.white}
-                    strokeWidth={0.7}
                   />
                 </Svg>
-              ) : null}
+                <View pointerEvents="none" style={styles.entranceLabel}>
+                  <Text style={styles.entranceLabelText}>{ENTRANCE_GATE_LABEL}</Text>
+                </View>
 
-              {layers.booths
-                ? data?.booths
-                    .filter(isBoothPlaced)
-                    .map((booth) => {
-                      const key = `booth:${booth.id}`;
+                {routePoints && routePoints.length > 1 ? (
+                  <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <Polyline
+                      points={routePoints.map((point) => `${point.x},${point.y}`).join(' ')}
+                      fill="none"
+                      stroke={colors.primary}
+                      strokeWidth={1.4}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeDasharray="4,3"
+                    />
+                    <Circle
+                      cx={routePoints[0].x}
+                      cy={routePoints[0].y}
+                      r={2.4}
+                      fill={colors.success}
+                      stroke={colors.white}
+                      strokeWidth={0.7}
+                    />
+                    <Circle
+                      cx={routePoints[routePoints.length - 1].x}
+                      cy={routePoints[routePoints.length - 1].y}
+                      r={2.4}
+                      fill={colors.danger}
+                      stroke={colors.white}
+                      strokeWidth={0.7}
+                    />
+                  </Svg>
+                ) : null}
+
+                {layers.booths
+                  ? data?.booths
+                      .filter(isBoothPlaced)
+                      .map((booth) => {
+                        const key = `booth:${booth.id}`;
+                        const active = selectedKey === key;
+                        const isRouteStart = routeStartKey === key;
+                        const isRouteEnd = routeEndKey === key;
+                        return (
+                          <Pressable
+                            key={key}
+                            onPress={() => selectLocation(key)}
+                            style={[
+                              styles.boothPin,
+                              { left: `${booth.mapX}%`, top: `${booth.mapY}%` },
+                              active && styles.boothPinSelected,
+                              isRouteStart && styles.pinRouteStart,
+                              isRouteEnd && styles.pinRouteEnd,
+                            ]}
+                          >
+                            <View style={[styles.boothPulse, { backgroundColor: ZONE_COLORS[booth.zone!] }]} />
+                            <Text style={styles.boothPinText} numberOfLines={1}>
+                              {booth.boothNo}
+                            </Text>
+                          </Pressable>
+                        );
+                      })
+                  : null}
+
+                {layers.stages
+                  ? data?.stages.filter(isStagePlaced).map((stage) => {
+                      const key = `stage:${stage.id}`;
                       const active = selectedKey === key;
                       const isRouteStart = routeStartKey === key;
                       const isRouteEnd = routeEndKey === key;
@@ -431,70 +458,44 @@ export default function MapScreen() {
                           key={key}
                           onPress={() => selectLocation(key)}
                           style={[
-                            styles.boothPin,
-                            { left: `${booth.mapX}%`, top: `${booth.mapY}%` },
-                            active && styles.boothPinSelected,
+                            styles.stagePin,
+                            { left: `${stage.mapX}%`, top: `${stage.mapY}%` },
+                            active && styles.stagePinSelected,
                             isRouteStart && styles.pinRouteStart,
                             isRouteEnd && styles.pinRouteEnd,
                           ]}
                         >
-                          <View style={[styles.boothPulse, { backgroundColor: ZONE_COLORS[booth.zone!] }]} />
-                          <Text style={styles.boothPinText} numberOfLines={1}>
-                            {booth.boothNo}
+                          <View style={styles.stagePulse} />
+                          <Text style={styles.stagePinText} numberOfLines={1}>
+                            {stage.name}
                           </Text>
                         </Pressable>
                       );
                     })
-                : null}
+                  : null}
 
-              {layers.stages
-                ? data?.stages.map((stage) => {
-                    const key = `stage:${stage.id}`;
-                    const active = selectedKey === key;
-                    const isRouteStart = routeStartKey === key;
-                    const isRouteEnd = routeEndKey === key;
-                    return (
-                      <Pressable
-                        key={key}
-                        onPress={() => selectLocation(key)}
-                        style={[
-                          styles.stagePin,
-                          { left: `${stage.mapX}%`, top: `${stage.mapY}%` },
-                          active && styles.stagePinSelected,
-                          isRouteStart && styles.pinRouteStart,
-                          isRouteEnd && styles.pinRouteEnd,
-                        ]}
-                      >
-                        <View style={styles.stagePulse} />
-                        <Text style={styles.stagePinText} numberOfLines={1}>
-                          {stage.name}
-                        </Text>
-                      </Pressable>
-                    );
-                  })
-                : null}
-
-              {layers.water
-                ? waterStations.map((station) => {
-                    const key = `water:${station.id}`;
-                    const active = selectedKey === key;
-                    return (
-                      <Pressable
-                        key={key}
-                        onPress={() => selectLocation(key)}
-                        style={[
-                          styles.waterPin,
-                          { left: `${station.map_x}%`, top: `${station.map_y}%` },
-                          active && styles.waterPinSelected,
-                          station.status !== 'active' && styles.waterPinAlert,
-                        ]}
-                      >
-                        <Droplet size={12} color={colors.white} />
-                      </Pressable>
-                    );
-                  })
-                : null}
-            </View>
+                {layers.water
+                  ? waterStations.map((station) => {
+                      const key = `water:${station.id}`;
+                      const active = selectedKey === key;
+                      return (
+                        <Pressable
+                          key={key}
+                          onPress={() => selectLocation(key)}
+                          style={[
+                            styles.waterPin,
+                            { left: `${station.map_x}%`, top: `${station.map_y}%` },
+                            active && styles.waterPinSelected,
+                            station.status !== 'active' && styles.waterPinAlert,
+                          ]}
+                        >
+                          <Droplet size={12} color={colors.white} />
+                        </Pressable>
+                      );
+                    })
+                  : null}
+              </View>
+            </ZoomPanCanvas>
           )}
         </View>
 
@@ -701,25 +702,20 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceMuted,
   },
   mapCanvas: {
-    // Yükseklik artık sabit değil — krokinin GERÇEK en-boy oranına göre
-    // (bkz. lib/useImageAspectRatio.ts) otomatik hesaplanıyor, admin
-    // ekranıyla birebir aynı oranı kullanmak için (bkz. o dosyadaki
-    // `mapCanvas` stili) — aksi halde aynı fotoğraf iki ekranda farklı
-    // kırpılır ve duvarlar/pinler kaymış görünür.
-    width: '100%',
-    overflow: 'hidden',
-    backgroundColor: colors.surfaceMuted,
-  },
-  noFloorPlan: {
+    // Konumlandırması artık ZoomPanCanvas'ın (bkz. components/ZoomPanCanvas.tsx)
+    // içindeki dönüştürülebilir katmanı tam olarak dolduruyor — en-boy oranı
+    // (bkz. lib/floorPlanGrid.ts > FLOOR_PLAN_ASPECT_RATIO) o sarmalayıcıda
+    // tanımlı, admin ekranıyla (AdminMapManagement.tsx) birebir aynı oran
+    // kullanılıyor ki admin'in çizdiği duvarlar burada kaymış görünmesin.
     position: 'absolute',
-    left: 24,
-    right: 24,
-    top: '42%',
-    alignItems: 'center',
-    gap: 8,
-    padding: 14,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    // Kroki artık bir fotoğraf değil, admin'in çizdiği bir plan — beyaz/açık
+    // "kağıt" zemin, admin ekranındaki görünümle tutarlı.
+    backgroundColor: '#ffffff',
   },
-  noFloorPlanText: { color: colors.textFaint, fontSize: 11, lineHeight: 16, textAlign: 'center' },
   centerDividerV: {
     position: 'absolute',
     left: '50%',
@@ -744,9 +740,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.85)',
+    borderColor: colors.white,
   },
   zoneCornerTagText: { color: colors.white, fontSize: 11, fontWeight: '900' },
+  entranceLabel: {
+    position: 'absolute',
+    left: '50%',
+    top: '99%',
+    transform: [{ translateX: -22 }, { translateY: -16 }],
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+    backgroundColor: '#16a34a',
+  },
+  entranceLabelText: { color: colors.white, fontSize: 8, fontWeight: '900', letterSpacing: 0.4 },
   boothPin: {
     position: 'absolute',
     zIndex: 4,

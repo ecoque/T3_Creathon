@@ -3,12 +3,14 @@
 // fonksiyon. Üretilen HTML, expo-print ile PDF'e çevrilip cihazın paylaşım
 // menüsünden gönderiliyor (bkz. AdminMapManagement.tsx > handleExportKroki).
 //
-// Admin gerçek bir kroki fotoğrafı yüklediyse (floorPlanUrl), o fotoğrafın
-// üzerine stant ve oturum yeri etiketleri basılıyor — tıpkı uygulama
-// içindeki görünüm gibi. Henüz fotoğraf yüklenmediyse, eskisi gibi soyut
-// zone bazlı bir tabloya düşülüyor.
+// Kroki artık bir fotoğraf DEĞİL — admin'in tamamen kendi çizdiği (duvar
+// çizgileri) bir vektör plan. Bu yüzden PDF'te de aynı planı bir SVG olarak
+// çiziyoruz: beyaz zemin üzerinde admin'in çizdiği duvarlar + stant/oturum
+// yeri pinleri, uygulama içindeki görünümle birebir aynı yüzde
+// koordinatlarında.
 
-import { ZONE_LETTER, ZONE_ORDER, isBoothPlaced } from './boothGrid';
+import { isBoothPlaced } from './boothGrid';
+import { ENTRANCE_GATE_COLOR, ENTRANCE_GATE_LABEL, ENTRANCE_GATE_LINE, FLOOR_PLAN_ASPECT_RATIO } from './floorPlanGrid';
 import type { AdminBooth, AdminStage, FloorPlanWall, ZoneDensityInfo } from '../types/admin';
 
 function escapeHtml(value: string) {
@@ -19,13 +21,7 @@ function escapeHtml(value: string) {
     .replace(/"/g, '&quot;');
 }
 
-function buildPhotoOverlaySection(
-  floorPlanUrl: string,
-  zones: ZoneDensityInfo[],
-  booths: AdminBooth[],
-  stages: AdminStage[],
-  walls: FloorPlanWall[],
-) {
+function buildKrokiSection(zones: ZoneDensityInfo[], booths: AdminBooth[], stages: AdminStage[], walls: FloorPlanWall[]) {
   const placedBooths = booths.filter(isBoothPlaced);
 
   const boothPins = placedBooths
@@ -49,18 +45,24 @@ function buildPhotoOverlaySection(
 
   // Admin'in elle çizdiği duvar çizgileri — rota bulma bunları engel sayıp
   // etraflarından dolanıyor (bkz. lib/routePlanner.ts), PDF'te de aynı
-  // çizgiler gösterilerek kroki her yerde tutarlı görünüyor.
+  // çizgiler gösterilerek kroki uygulama içindeki görünümle tutarlı kalıyor.
   const wallLines = walls
     .map((wall) => `<line x1="${wall.x1}" y1="${wall.y1}" x2="${wall.x2}" y2="${wall.y2}" />`)
     .join('');
-  const wallOverlay = walls.length
-    ? `<svg class="wall-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">${wallLines}</svg>`
-    : '';
+
+  // Sabit "giriş kapısı" işareti — admin ve katılımcı ekranlarındaki (bkz.
+  // AdminMapManagement.tsx, app/(tabs)/map.tsx) yeşil çizgiyle birebir aynı
+  // sabit koordinat (lib/floorPlanGrid.ts > ENTRANCE_GATE_LINE), PDF'te de
+  // tutarlılık için gösteriliyor.
+  const entranceLine = `<line x1="${ENTRANCE_GATE_LINE.x1}" y1="${ENTRANCE_GATE_LINE.y1}" x2="${ENTRANCE_GATE_LINE.x2}" y2="${ENTRANCE_GATE_LINE.y2}" stroke="${ENTRANCE_GATE_COLOR}" stroke-width="2.2" stroke-linecap="round" />`;
 
   return `
-    <section class="photo-wrap">
-      <img class="photo" src="${floorPlanUrl}" />
-      ${wallOverlay}
+    <section class="kroki-wrap">
+      <svg class="kroki-canvas" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <rect x="0" y="0" width="100" height="100" fill="#ffffff" />
+        ${wallLines ? `<g class="wall-overlay">${wallLines}</g>` : ''}
+        ${entranceLine}
+      </svg>
       ${boothPins}
       ${stagePins}
     </section>
@@ -68,54 +70,22 @@ function buildPhotoOverlaySection(
       <span class="legend-item"><span class="pin-dot" style="background:#2563eb"></span> Stant</span>
       <span class="legend-item"><span class="pin-dot stage-dot"></span> Sahne / Oturum Yeri</span>
       ${walls.length ? '<span class="legend-item"><span class="legend-wall"></span> Duvar</span>' : ''}
+      <span class="legend-item"><span class="legend-entrance"></span> ${ENTRANCE_GATE_LABEL === 'GİRİŞ' ? 'Giriş Kapısı' : ENTRANCE_GATE_LABEL}</span>
     </div>
   `;
-}
-
-// Henüz gerçek bir kroki fotoğrafı yüklenmediyse: her zone için basit bir
-// stant listesi (artık kareli bir ızgara değil — kroki serbest yerleşimli).
-function buildAbstractGridSection(zones: ZoneDensityInfo[], booths: AdminBooth[]) {
-  const placed = booths.filter(isBoothPlaced);
-
-  return ZONE_ORDER.map((code) => {
-    const zoneInfo = zones.find((zone) => zone.code === code);
-    const zoneBooths = placed.filter((booth) => booth.zone === code);
-    const rows = zoneBooths.length
-      ? zoneBooths
-          .map(
-            (booth) =>
-              `<div class="zone-row"><span class="zone-row-no">${escapeHtml(booth.boothNo)}</span><span class="zone-row-name">${escapeHtml(booth.companyName)}</span></div>`,
-          )
-          .join('')
-      : '<div class="zone-row zone-row-empty">Henüz stant yerleştirilmedi.</div>';
-
-    return `
-      <section class="zone">
-        <div class="zone-header" style="border-color:${zoneInfo?.color || '#94a3b8'}">
-          <span class="zone-dot" style="background:${zoneInfo?.color || '#94a3b8'}"></span>
-          <h2>${ZONE_LETTER[code]}</h2>
-          <span class="zone-count">${zoneBooths.length} stant</span>
-        </div>
-        <div class="zone-rows">${rows}</div>
-      </section>
-    `;
-  }).join('');
 }
 
 export function buildKrokiHtml(
   zones: ZoneDensityInfo[],
   booths: AdminBooth[],
   stages: AdminStage[] = [],
-  floorPlanUrl?: string | null,
   eventName = 'Take Off',
   walls: FloorPlanWall[] = [],
 ) {
   const generatedAt = new Date().toLocaleString('tr-TR');
   const placed = booths.filter(isBoothPlaced);
 
-  const bodySection = floorPlanUrl
-    ? buildPhotoOverlaySection(floorPlanUrl, zones, booths, stages, walls)
-    : buildAbstractGridSection(zones, booths);
+  const bodySection = buildKrokiSection(zones, booths, stages, walls);
 
   const indexRows = placed
     .slice()
@@ -135,9 +105,8 @@ export function buildKrokiHtml(
         body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #0f172a; padding: 28px; }
         h1 { font-size: 20px; margin: 0 0 2px 0; }
         .subtitle { color: #64748b; font-size: 11px; margin-bottom: 22px; }
-        .photo-wrap { position: relative; width: 100%; margin-bottom: 14px; page-break-inside: avoid; }
-        .photo { width: 100%; display: block; border-radius: 10px; border: 1px solid #e2e8f0; }
-        .wall-overlay { position: absolute; inset: 0; width: 100%; height: 100%; }
+        .kroki-wrap { position: relative; width: 100%; aspect-ratio: ${FLOOR_PLAN_ASPECT_RATIO}; margin-bottom: 14px; page-break-inside: avoid; border-radius: 10px; border: 1px solid #e2e8f0; overflow: hidden; }
+        .kroki-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
         .wall-overlay line { stroke: #dc2626; stroke-width: 1.6; stroke-linecap: round; }
         .pin { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 3px; }
         .pin-dot { width: 9px; height: 9px; border-radius: 5px; border: 1.5px solid white; box-shadow: 0 0 0 1px rgba(0,0,0,0.25); flex-shrink: 0; }
@@ -147,16 +116,7 @@ export function buildKrokiHtml(
         .legend-line { display: flex; gap: 16px; margin-bottom: 18px; }
         .legend-item { display: flex; align-items: center; gap: 5px; font-size: 10px; color: #475569; }
         .legend-wall { display: inline-block; width: 12px; height: 2px; background: #dc2626; border-radius: 2px; }
-        .zone { margin-bottom: 20px; page-break-inside: avoid; }
-        .zone-header { display: flex; align-items: center; gap: 8px; border-left: 4px solid; padding-left: 8px; margin-bottom: 8px; }
-        .zone-dot { width: 10px; height: 10px; border-radius: 5px; flex-shrink: 0; }
-        .zone-header h2 { font-size: 14px; margin: 0; flex: 1; }
-        .zone-count { color: #94a3b8; font-size: 9px; font-weight: 600; }
-        .zone-rows { display: flex; flex-direction: column; gap: 4px; }
-        .zone-row { display: flex; align-items: center; gap: 8px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 5px 9px; font-size: 10px; }
-        .zone-row-no { font-weight: 700; min-width: 42px; }
-        .zone-row-name { color: #475569; }
-        .zone-row-empty { color: #cbd5e1; border-style: dashed; justify-content: center; }
+        .legend-entrance { display: inline-block; width: 12px; height: 2px; background: #16a34a; border-radius: 2px; }
         table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 10px; }
         th, td { border-bottom: 1px solid #e2e8f0; text-align: left; padding: 5px 6px; }
         th { color: #64748b; font-size: 9px; text-transform: uppercase; letter-spacing: 0.03em; }

@@ -3,8 +3,10 @@ import {
   Activity,
   Check,
   Crosshair,
+  Droplet,
   Edit3,
   Layers3,
+  Maximize2,
   Move,
   PenLine,
   Plus,
@@ -12,7 +14,6 @@ import {
   Share2,
   Store,
   Trash2,
-  Upload,
   X,
 } from 'lucide-react-native';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -34,11 +35,42 @@ import {
 import { Line, Svg } from 'react-native-svg';
 
 import { colors } from '../../constants/theme';
-import { ZONE_COLORS, ZONE_LETTER, ZONE_ORDER, isBoothPlaced, zoneQuadrant } from '../../lib/boothGrid';
+import {
+  ZONE_COLORS,
+  ZONE_LETTER,
+  ZONE_ORDER,
+  isBoothPlaced,
+  isStagePlaced,
+  zoneForPercent,
+  zoneQuadrant,
+} from '../../lib/boothGrid';
 import { useAdminStore } from '../../lib/adminDbStore';
+import {
+  ENTRANCE_GATE_COLOR,
+  ENTRANCE_GATE_LABEL,
+  ENTRANCE_GATE_LINE,
+  FLOOR_PLAN_ASPECT_RATIO,
+  GRID_COLS,
+  GRID_ROWS,
+  snapToGrid,
+} from '../../lib/floorPlanGrid';
 import { buildKrokiHtml } from '../../lib/krokiExport';
-import { useImageAspectRatio } from '../../lib/useImageAspectRatio';
+import { useCreateWaterStation, useUpdateWaterStationPosition, useWaterStations } from '../../lib/useWaterStations';
 import type { AdminBooth, AdminStage, EventSettings, FloorPlanWall, ZoneDensityInfo } from '../../types/admin';
+
+// Yerleştirilmemiş bir stant/alanı krokiye ilk getirişte atanan varsayılan
+// nokta — admin bir sonraki adımda etiketi sürükleyip gerçek yerine taşıyor
+// (bkz. bringBoothToMap/bringStageToMap). Krokinin tam ortası, hangi
+// yöne sürükleneceği belli olmadığı için nötr bir başlangıç noktası.
+const DEFAULT_PLACEMENT = { x: 50, y: 50 };
+
+// Stant/sahne/su sebili sürükleme artık duvar çizimiyle aynı "önce taslak,
+// sonra toplu kaydet" desenini izliyor (bkz. pendingPositions state'i) —
+// admin krokide istediği kadar öğeyi sürükleyip taşıyabiliyor, hiçbiri anında
+// Supabase'e yazılmıyor; en sonda tek bir "Konumları Kaydet" ile hepsi aynı
+// anda kaydediliyor. `kind`, kaydederken hangi API'nin (placeBooth /
+// updateStagePosition / su sebili mutation'ı) çağrılacağını belirliyor.
+type PendingPositionEntry = { kind: 'booth' | 'stage' | 'water'; id: string; x: number; y: number };
 
 type LayerKey = 'booths' | 'stages' | 'zones';
 
@@ -124,6 +156,15 @@ function DensityLegend() {
 function zoneSubtitle(zone: ZoneDensityInfo) {
   const separator = zone.name.indexOf(' - ');
   return separator >= 0 ? zone.name.slice(separator + 3) : zone.name;
+}
+
+// Krokideki sahne/alan pin'i küçük tutulduğu için tam ad yerine kısaltılmış
+// bir etiket gösteriliyor (yer kaplamasın diye) — tam ad hâlâ Inspector
+// panelinde ve dokunulunca açılan detayda görünüyor, sadece pin üzerindeki
+// etiket kısalıyor.
+function shortStageLabel(name: string) {
+  const trimmed = name.trim();
+  return trimmed.length > 9 ? `${trimmed.slice(0, 8)}…` : trimmed;
 }
 
 function LayerToggle({
@@ -471,8 +512,17 @@ export function AdminMapManagement({
   const placeBooth = useAdminStore((state) => state.placeBooth);
   const unplaceBooth = useAdminStore((state) => state.unplaceBooth);
   const updateStagePosition = useAdminStore((state) => state.updateStagePosition);
-  const uploadFloorPlan = useAdminStore((state) => state.uploadFloorPlan);
+  const unplaceStage = useAdminStore((state) => state.unplaceStage);
   const saveSettings = useAdminStore((state) => state.saveSettings);
+  const { data: waterStations = [] } = useWaterStations();
+  // Su sebilleri artık bu ekrandan da eklenip sürüklenebiliyor — konum
+  // güncellemesi stant/sahne sürüklemesiyle aynı desen (bkz.
+  // handleMoveWaterStation), ekleme ise varsayılan olarak krokinin ortasına
+  // düşüyor ve admin hemen ardından etiketi sürükleyerek yerini ayarlıyor
+  // (bkz. handleAddWaterStation). Silme/durum takibi hâlâ "Su İstasyonları"
+  // sekmesinde.
+  const createWaterStation = useCreateWaterStation();
+  const updateWaterStationPosition = useUpdateWaterStationPosition();
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
     booths: true,
     stages: true,
@@ -482,30 +532,91 @@ export function AdminMapManagement({
     selectedBoothIdFromNav || booths[0]?.id || null,
   );
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
-  const [repositioning, setRepositioning] = useState(false);
   const [placementError, setPlacementError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [uploadingFloorPlan, setUploadingFloorPlan] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 1, height: 1 });
   const [zoneModalVisible, setZoneModalVisible] = useState(false);
   const [editingZone, setEditingZone] = useState<ZoneDensityInfo | null>(null);
-  // Duvar çizme modu: her kroki fotoğrafı farklı olduğu için duvarların
-  // nerede olduğu otomatik tespit edilmiyor — admin krokiyi yükledikten
-  // sonra üzerine elle duvar çizgileri çiziyor (iki noktaya dokunarak),
-  // rota bulma algoritması (lib/routePlanner.ts) bunları stant/sahne gibi
-  // birer engel sayıp etraflarından dolanıyor. wallStart, ilk noktaya
-  // dokunulduktan sonra ikinci nokta beklenirken geçici olarak tutuluyor.
+  // Admin krokiyi tamamen elle çizdiği için normal ekranda bile kroki kartı
+  // zaten büyütüldü (bkz. mapCardWide), ama daha rahat çizim isteyen admin
+  // için ayrıca tüm ekranı kaplayan bir "Tam Ekran Çiz" modu var — aynı
+  // canvas içeriği (renderCanvas/renderTray) hem normal ekranda hem bu tam
+  // ekran Modal'ının içinde render ediliyor, ikisi aynı anda MONTE OLMUYOR
+  // (aşağıdaki JSX'te birbirini dışlıyor) ki canvasSize ölçümü çakışmasın.
+  const [focusMode, setFocusMode] = useState(false);
+  // Duvar çizme modu: kroki artık bir fotoğraf değil, admin'in tamamen elle
+  // oluşturduğu bir plan — admin krokiyi sıfırdan iki noktaya dokunarak
+  // (duvarın başı ve sonu) çiziyor, her dokunuş en yakın ızgara kesişimine
+  // yapıştırılıyor (bkz. lib/floorPlanGrid.ts > snapToGrid) ki çizgiler yamuk
+  // çıkmasın. Rota bulma algoritması (lib/routePlanner.ts) bu duvarları
+  // stant/sahne gibi birer engel sayıp etraflarından dolanıyor. wallStart,
+  // ilk noktaya dokunulduktan sonra ikinci nokta beklenirken geçici olarak
+  // tutuluyor.
+  //
+  // wallDraft: duvar çizme modundayken eklenen/silinen duvarlar artık HER
+  // ÇİZGİDE ayrı ayrı Supabase'e kaydedilmiyor (bu, çok sayıda duvar
+  // çizerken zahmetli ve yavaştı) — bunun yerine yerel bir taslak olarak
+  // burada tutuluyor, admin "Kaydet" ile bitirene kadar hiç ağ isteği
+  // gitmiyor (bkz. startWallDrawing/finishWallDrawing).
   const [wallDrawing, setWallDrawing] = useState(false);
   const [wallStart, setWallStart] = useState<{ x: number; y: number } | null>(null);
+  const [wallDraft, setWallDraft] = useState<FloorPlanWall[] | null>(null);
+  const [savingWalls, setSavingWalls] = useState(false);
+  const displayWalls = wallDrawing ? wallDraft ?? [] : settings.floorPlanWalls;
+
+  // Stant/sahne/su sebili konumları için taslak: sürükleyip bıraktıkça
+  // sadece burada güncelleniyor (bkz. placeBoothAt/moveStageTo/
+  // handleMoveWaterStation), hiçbir ağ isteği gitmiyor. Anahtar `"kind:id"`
+  // biçiminde ("booth:<uuid>" / "stage:<uuid>" / "water:<uuid>") — aynı
+  // öğenin ikinci bir sürüklemesi sadece bu taslaktaki girdiyi güncelliyor.
+  // `saveAllPositions` bunların HEPSİNİ tek bir "Konumları Kaydet" basışında
+  // Supabase'e yazıyor (bkz. aşağısı).
+  const [pendingPositions, setPendingPositions] = useState<Record<string, PendingPositionEntry>>({});
+  const [savingPositions, setSavingPositions] = useState(false);
+  const pendingPositionCount = Object.keys(pendingPositions).length;
 
   const selectedBooth = booths.find((booth) => booth.id === selectedBoothId) || null;
   const selectedStage = stages.find((stage) => stage.id === selectedStageId) || null;
-  const hasFloorPlan = !!settings.floorPlanUrl;
-  // Katılımcı ekranıyla (app/(tabs)/map.tsx) BİREBİR AYNI en-boy oranı —
-  // ikisi de bu hook'u kullanıyor, böylece aynı kroki fotoğrafı hiçbir
-  // ekranda farklı kırpılmıyor ve yüzde koordinatlı pin/duvarlar iki
-  // ekranda da fotoğrafın tam olarak aynı noktasına denk geliyor.
-  const floorPlanAspectRatio = useImageAspectRatio(hasFloorPlan ? settings.floorPlanUrl : null);
+
+  // Bir stant/sahne, ya gerçekten kaydedilmiş (isBoothPlaced/isStagePlaced)
+  // ya da henüz kaydedilmemiş ama taslakta bir konumu VARSA (admin daha yeni
+  // krokiye getirdi/sürükledi ama henüz "Konumları Kaydet"e basmadı) krokide
+  // görünür kabul ediliyor — "Yerleştirilmemiş Öğeler" tepsisinden düşüp
+  // krokide pin olarak belirmesi için persist edilmiş olması ŞART DEĞİL.
+  function isBoothOnCanvas(booth: AdminBooth) {
+    return isBoothPlaced(booth) || `booth:${booth.id}` in pendingPositions;
+  }
+  function isStageOnCanvas(stage: AdminStage) {
+    return isStagePlaced(stage) || `stage:${stage.id}` in pendingPositions;
+  }
+  // Bir öğenin krokide GÖSTERİLECEĞİ konum — taslakta bekleyen bir değişiklik
+  // varsa o, yoksa son kaydedilmiş (gerçek) konum.
+  function boothMapPosition(booth: AdminBooth) {
+    const pending = pendingPositions[`booth:${booth.id}`];
+    return pending ? { x: pending.x, y: pending.y } : { x: booth.mapX, y: booth.mapY };
+  }
+  function stageMapPosition(stage: AdminStage) {
+    const pending = pendingPositions[`stage:${stage.id}`];
+    return pending ? { x: pending.x, y: pending.y } : { x: stage.mapX, y: stage.mapY };
+  }
+  // Inspector panelinde gösterilecek zone — henüz kaydedilmemiş ama taslakta
+  // yerleştirilmiş bir öğe için zone, o taslak konumdan anlık hesaplanıyor
+  // (persist edilmiş `booth.zone`/`stage.zone` henüz null olabilir).
+  function boothZoneDisplay(booth: AdminBooth) {
+    if (!isBoothOnCanvas(booth)) return null;
+    if (isBoothPlaced(booth)) return booth.zone;
+    const pos = boothMapPosition(booth);
+    return zoneForPercent(pos.x, pos.y);
+  }
+  function stageZoneDisplay(stage: AdminStage) {
+    if (!isStageOnCanvas(stage)) return null;
+    if (isStagePlaced(stage)) return stage.zone;
+    const pos = stageMapPosition(stage);
+    return zoneForPercent(pos.x, pos.y);
+  }
+
+  const unplacedBooths = booths.filter((booth) => !isBoothOnCanvas(booth));
+  const unplacedStages = stages.filter((stage) => !isStageOnCanvas(stage));
 
   useEffect(() => {
     if (!selectedBoothIdFromNav) return;
@@ -514,9 +625,11 @@ export function AdminMapManagement({
     setSelectedBoothId(target.id);
     setSelectedStageId(null);
     setPlacementError(null);
-    // Krokiye henüz yerleştirilmemiş bir stant için doğrudan yerleştirme
-    // moduna geç, admin ekstra bir tıklamaya gerek kalmadan kareyi seçebilsin.
-    setRepositioning(!isBoothPlaced(target));
+    // Krokiye henüz yerleştirilmemiş bir stant, buradan seçilir seçilmez
+    // (tıpkı aşağıdaki "Yerleştirilmemiş Öğeler" tepsisinden seçilmiş gibi)
+    // varsayılan bir noktaya otomatik getiriliyor — admin ekstra bir kroki
+    // tıklamasına gerek kalmadan doğrudan sürükleyerek konumlandırabiliyor.
+    if (!isBoothOnCanvas(target)) placeBoothAt(target, DEFAULT_PLACEMENT.x, DEFAULT_PLACEMENT.y);
   }, [booths, selectedBoothIdFromNav]);
 
   useEffect(() => {
@@ -526,19 +639,15 @@ export function AdminMapManagement({
     setSelectedStageId(target.id);
     setSelectedBoothId(null);
     setPlacementError(null);
-    // Bir sahne/alan her zaman krokide zaten bir pin'e sahiptir (yerleştirilmemiş
-    // durumu yok) — bu yüzden tıkla-yerleştir modunu (repositioning) hiç açmıyoruz,
-    // taşıma artık sadece etiketi sürükleyerek yapılıyor. Bunu true yapmak, tüm
-    // krokiyi kaplayan tıklama katmanının (placementOverlay) pinlerin üzerine
-    // binip sürüklemeyi tamamen engellemesine yol açıyordu.
-    setRepositioning(false);
+    // Booth'takiyle birebir aynı mantık: henüz yerleştirilmemiş bir alan/sahne
+    // seçilir seçilmez varsayılan bir noktaya otomatik getiriliyor.
+    if (!isStageOnCanvas(target)) moveStageTo(target, DEFAULT_PLACEMENT.x, DEFAULT_PLACEMENT.y);
   }, [stages, selectedStageIdFromNav]);
 
   useEffect(() => {
     if (selectedBoothId && !booths.some((booth) => booth.id === selectedBoothId)) {
       const nextId = booths[0]?.id || null;
       setSelectedBoothId(nextId);
-      setRepositioning(false);
       if (nextId) onSelectBooth?.(nextId);
     }
   }, [booths, onSelectBooth, selectedBoothId]);
@@ -550,7 +659,6 @@ export function AdminMapManagement({
   function selectBooth(booth: AdminBooth) {
     setSelectedBoothId(booth.id);
     setSelectedStageId(null);
-    setRepositioning(false);
     setPlacementError(null);
     onSelectBooth?.(booth.id);
   }
@@ -558,139 +666,594 @@ export function AdminMapManagement({
   function selectStage(stage: AdminStage) {
     setSelectedStageId(stage.id);
     setSelectedBoothId(null);
-    setRepositioning(false);
     setPlacementError(null);
     onSelectStage?.(stage.id);
   }
 
-  async function handleUnplace() {
-    if (!selectedBooth) return;
-    const ok = await unplaceBooth(selectedBooth.id);
-    onNotify?.(ok ? `${selectedBooth.companyName} krokiden kaldırıldı.` : 'İşlem başarısız oldu.');
+  // Taslağa (pendingPositions) bir konum yazar/günceller — hiçbir ağ isteği
+  // göndermez. `saveAllPositions` çağrılana kadar sadece bu taslakta durur.
+  function setPendingPosition(kind: PendingPositionEntry['kind'], id: string, x: number, y: number) {
+    setPendingPositions((current) => ({ ...current, [`${kind}:${id}`]: { kind, id, x, y } }));
   }
 
-  // Hem stantlar hem de sahneler/oturum yerleri artık krokinin (gerçek
-  // fotoğraf veya soyut görünüm) herhangi bir noktasına serbestçe dokunularak
-  // yerleştiriliyor — kareye takılma yok. Hangi zone'a ait olduğu dokunulan
-  // noktanın krokideki çeyreğinden otomatik belirleniyor (bkz.
-  // adminRepository.placeBooth / updateStagePosition).
-  // Bir standı krokide belirli bir yüzde koordinatına yerleştirir/taşır —
-  // hem "buton ile seç, sonra dokun" akışında (handleCanvasPress) hem de
-  // etiketi doğrudan sürükleyip bırakınca (DraggablePin > onDrop) kullanılıyor.
-  async function placeBoothAt(booth: AdminBooth, x: number, y: number) {
-    const ok = await placeBooth(booth.id, x, y);
-    if (ok) {
-      setRepositioning(false);
-      setPlacementError(null);
-      const placed = useAdminStore.getState().booths.find((item) => item.id === booth.id);
-      onNotify?.(`${placed?.boothNo || booth.companyName} krokiye yerleştirildi.`);
-    } else {
-      setPlacementError(useAdminStore.getState().error || 'Stant krokiye yerleştirilemedi.');
-    }
-  }
-
-  async function moveStageTo(stage: AdminStage, x: number, y: number) {
-    const ok = await updateStagePosition(stage.id, x, y);
-    if (ok) {
-      setRepositioning(false);
-      setPlacementError(null);
-      onNotify?.(`${stage.name} krokide konumlandırıldı.`);
-    } else {
-      setPlacementError(useAdminStore.getState().error || 'Alan konumu güncellenemedi.');
-    }
-  }
-
-  function toggleWallDrawing() {
-    setWallDrawing((current) => {
-      const next = !current;
-      if (next) {
-        // Duvar modu, stant yerleştirme moduyla aynı anda açık kalmasın —
-        // ikisi de aynı tam-ekran tıklama katmanını kullanıyor.
-        setRepositioning(false);
-        setPlacementError(null);
-      }
-      setWallStart(null);
+  function clearPendingPosition(kind: PendingPositionEntry['kind'], id: string) {
+    setPendingPositions((current) => {
+      const key = `${kind}:${id}`;
+      if (!(key in current)) return current;
+      const next = { ...current };
+      delete next[key];
       return next;
     });
   }
 
-  async function handleDeleteWall(wallId: string) {
-    const ok = await saveSettings({
-      floorPlanWalls: settings.floorPlanWalls.filter((wall) => wall.id !== wallId),
-    });
-    onNotify?.(ok ? 'Duvar silindi.' : useAdminStore.getState().error || 'Duvar silinemedi.');
+  // "Yerleştirilmemiş Öğeler" tepsisindeki bir stant/alan chip'ine dokununca
+  // (ya da başka bir ekrandan nav ile seçilince, bkz. yukarıdaki effect'ler)
+  // çağrılır: öğeyi hemen varsayılan bir noktaya yerleştirip krokide görünür
+  // hale getirir ve seçili yapar — admin ardından etiketi sürükleyerek asıl
+  // yerine taşır. Bu da (sürüklemede olduğu gibi) sadece taslağa yazılıyor,
+  // Supabase'e "Konumları Kaydet"e basılana kadar hiçbir şey gitmiyor.
+  function bringBoothToMap(booth: AdminBooth) {
+    selectBooth(booth);
+    placeBoothAt(booth, DEFAULT_PLACEMENT.x, DEFAULT_PLACEMENT.y);
   }
 
-  // Tıkla-yerleştir modu artık sadece henüz krokiye hiç konulmamış (pini
-  // olmayan) bir stant için gerekli — sahneler ve zaten yerleştirilmiş
-  // stantlar için taşıma DraggablePin'in onDrop'u üzerinden sürükleyerek
-  // yapılıyor (bkz. placeBoothAt / moveStageTo çağrıları aşağıda). Duvar
-  // çizme modunda ise ilk dokunuş başlangıç noktasını, ikinci dokunuş
-  // bitiş noktasını belirleyip yeni bir duvar çizgisi oluşturuyor.
-  async function handleCanvasPress(event: GestureResponderEvent) {
-    const x = Math.round((event.nativeEvent.locationX / canvasSize.width) * 100);
-    const y = Math.round((event.nativeEvent.locationY / canvasSize.height) * 100);
-    const clampedX = Math.max(3, Math.min(97, x));
-    const clampedY = Math.max(3, Math.min(97, y));
+  function bringStageToMap(stage: AdminStage) {
+    selectStage(stage);
+    moveStageTo(stage, DEFAULT_PLACEMENT.x, DEFAULT_PLACEMENT.y);
+  }
 
-    if (wallDrawing) {
-      if (!wallStart) {
-        setWallStart({ x: clampedX, y: clampedY });
-        return;
+  // Krokiden kaldırma: eğer öğe hiç kaydedilmemiş, sadece taslakta yeni
+  // getirilmişse (henüz Supabase'de bir kaydı yok) silinecek gerçek bir şey
+  // yok — taslaktan çıkarmak yeterli. Zaten kaydedilmiş bir öğeyse gerçek
+  // `unplaceBooth`/`unplaceStage` çağrısı gerekiyor (bu işlem ERTELENMİYOR,
+  // "krokiden kaldırma" bir konum değişikliği değil, ayrı bir eylem).
+  async function handleUnplace() {
+    if (!selectedBooth) return;
+    if (!isBoothPlaced(selectedBooth)) {
+      clearPendingPosition('booth', selectedBooth.id);
+      onNotify?.(`${selectedBooth.companyName} krokiden kaldırıldı.`);
+      return;
+    }
+    const ok = await unplaceBooth(selectedBooth.id);
+    if (ok) clearPendingPosition('booth', selectedBooth.id);
+    onNotify?.(ok ? `${selectedBooth.companyName} krokiden kaldırıldı.` : 'İşlem başarısız oldu.');
+  }
+
+  async function handleUnplaceStage() {
+    if (!selectedStage) return;
+    if (!isStagePlaced(selectedStage)) {
+      clearPendingPosition('stage', selectedStage.id);
+      onNotify?.(`${selectedStage.name} krokiden kaldırıldı.`);
+      return;
+    }
+    const ok = await unplaceStage(selectedStage.id);
+    if (ok) clearPendingPosition('stage', selectedStage.id);
+    onNotify?.(ok ? `${selectedStage.name} krokiden kaldırıldı.` : 'İşlem başarısız oldu.');
+  }
+
+  // Hem stantlar hem de sahneler/oturum yerleri artık krokinin herhangi bir
+  // noktasına serbestçe yerleştiriliyor — kareye takılma yok. Hangi zone'a ait
+  // olduğu bırakılan noktanın krokideki çeyreğinden otomatik belirleniyor
+  // (bkz. boothZoneDisplay/stageZoneDisplay, kaydedilirken de aynı hesap
+  // adminRepository.placeBooth/updateStagePosition içinde tekrarlanıyor).
+  //
+  // Duvar çiziminde olduğu gibi burası da artık SADECE taslağı günceller —
+  // hem ilk kez krokiye getirilirken (bkz. bringBoothToMap) hem de etiketi
+  // doğrudan sürükleyip bırakınca (DraggablePin > onDrop) hiçbir ağ isteği
+  // gitmiyor, admin istediği kadar öğeyi taşıyabiliyor. Gerçek kayıt sadece
+  // "Konumları Kaydet" ile, tek seferde oluyor (bkz. saveAllPositions).
+  function placeBoothAt(booth: AdminBooth, x: number, y: number) {
+    setPlacementError(null);
+    setPendingPosition('booth', booth.id, x, y);
+  }
+
+  function moveStageTo(stage: AdminStage, x: number, y: number) {
+    setPlacementError(null);
+    setPendingPosition('stage', stage.id, x, y);
+  }
+
+  // Taslaktaki TÜM bekleyen konum değişikliklerini (stant + sahne + su
+  // sebili, hepsi bir arada) TEK bir "Konumları Kaydet" basışında paralel
+  // olarak Supabase'e yazar — duvar çizimindeki "hepsini bitir, sonra tek
+  // seferde kaydet" deseniyle birebir aynı. Başarısız olanlar taslakta kalır
+  // (admin tekrar "Kaydet"e basarak yeniden deneyebilir), başarılı olanlar
+  // taslaktan temizlenir.
+  async function saveAllPositions() {
+    const entries = Object.values(pendingPositions);
+    if (!entries.length) return;
+    setSavingPositions(true);
+
+    const results: Array<PendingPositionEntry & { ok: boolean }> = [];
+
+    // Stantlar SIRAYLA (paralel değil) kaydediliyor. Sebebi: stant numarası
+    // aynı zone'daki DİĞER stantlara bakılarak hesaplanıyor (bkz.
+    // adminRepository.placeBooth > nextBoothNumber). Birden fazla stant aynı
+    // anda paralel kaydedilseydi, hepsi henüz güncellenmemiş aynı stant
+    // listesine bakıp ÇAKIŞAN (aynı) numarayı üretebilirdi — tam olarak "bir
+    // dahaki sefere tek tek taşımak" ihtiyacını doğuran hataydı bu. Sırayla
+    // işleyerek her stant bir öncekinin kaydedilmiş numarasını görmüş oluyor.
+    const boothEntries = entries.filter((entry) => entry.kind === 'booth');
+    for (const entry of boothEntries) {
+      try {
+        const ok = await placeBooth(entry.id, entry.x, entry.y);
+        results.push({ ...entry, ok });
+      } catch {
+        results.push({ ...entry, ok: false });
       }
-      const newWall: FloorPlanWall = {
-        id: `wall-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        x1: wallStart.x,
-        y1: wallStart.y,
-        x2: clampedX,
-        y2: clampedY,
-      };
-      setWallStart(null);
-      const ok = await saveSettings({ floorPlanWalls: [...settings.floorPlanWalls, newWall] });
-      onNotify?.(ok ? 'Duvar eklendi.' : useAdminStore.getState().error || 'Duvar eklenemedi.');
-      return;
     }
 
-    if (!repositioning || !selectedBooth) return;
-    await placeBoothAt(selectedBooth, clampedX, clampedY);
+    // Sahne ve su sebili konumlarının böyle bir numaralandırma bağımlılığı
+    // yok — birbirlerinden bağımsız satırlar, paralel kaydedilmeleri güvenli.
+    const otherEntries = entries.filter((entry) => entry.kind !== 'booth');
+    const otherResults = await Promise.all(
+      otherEntries.map(async (entry) => {
+        try {
+          if (entry.kind === 'stage') {
+            const ok = await updateStagePosition(entry.id, entry.x, entry.y);
+            return { ...entry, ok };
+          }
+          await updateWaterStationPosition.mutateAsync({ stationId: entry.id, mapX: entry.x, mapY: entry.y });
+          return { ...entry, ok: true };
+        } catch {
+          return { ...entry, ok: false };
+        }
+      }),
+    );
+    results.push(...otherResults);
+
+    setSavingPositions(false);
+    const succeeded = results.filter((r) => r.ok);
+    const failed = results.filter((r) => !r.ok);
+    if (succeeded.length) {
+      setPendingPositions((current) => {
+        const next = { ...current };
+        succeeded.forEach((r) => delete next[`${r.kind}:${r.id}`]);
+        return next;
+      });
+    }
+    onNotify?.(
+      failed.length
+        ? `${succeeded.length}/${results.length} konum kaydedildi, ${failed.length} tanesi başarısız oldu — tekrar "Kaydet"e dokunabilirsin.`
+        : `${results.length} konum kaydedildi.`,
+    );
   }
 
-  async function handlePickFloorPlan() {
-    // Lazy require: bu native modül eski Dev Client build'lerinde bulunmayabilir
-    // (yeni eklendi, yeni build gerektirir). Statik import tüm dosyayı çökertir.
-    let ImagePicker: typeof import('expo-image-picker');
-    try {
-      ImagePicker = require('expo-image-picker');
-    } catch {
-      onNotify?.('Bu özellik için uygulamanın güncel bir build ile yeniden kurulması gerekiyor.');
-      return;
-    }
+  // Duvar çizmeye başlarken mevcut kayıtlı duvarların bir kopyası taslağa
+  // alınıyor — çizim boyunca eklenen/silinen her şey bu taslakta kalıyor,
+  // Supabase'e hiç dokunulmuyor.
+  function startWallDrawing() {
+    setWallDraft([...settings.floorPlanWalls]);
+    setWallStart(null);
+    setPlacementError(null);
+    setWallDrawing(true);
+  }
 
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      onNotify?.('Kroki resmi seçmek için galeri izni gerekiyor.');
+  // Duvar çizimini bitirir: taslaktaki TÜM duvarlar TEK bir Supabase
+  // isteğiyle kaydedilir — admin artık her çizgiden sonra beklemek zorunda
+  // kalmıyor, istediği kadar duvar çizip en sonda tek seferde kaydediyor.
+  async function finishWallDrawing() {
+    const draft = wallDraft ?? settings.floorPlanWalls;
+    setWallStart(null);
+    setSavingWalls(true);
+    const ok = await saveSettings({ floorPlanWalls: draft });
+    setSavingWalls(false);
+    setWallDrawing(false);
+    setWallDraft(null);
+    onNotify?.(
+      ok ? `Duvarlar kaydedildi (${draft.length}).` : useAdminStore.getState().error || 'Duvarlar kaydedilemedi.',
+    );
+  }
+
+  function handleWallToolPress() {
+    if (wallDrawing) {
+      void finishWallDrawing();
+    } else {
+      startWallDrawing();
+    }
+  }
+
+  // Duvar çizim modundayken bir duvarı silmek de taslak üzerinde yapılır,
+  // ayrı bir kayıt isteği göndermez — "Kaydet" ile birlikte kalıcı olur.
+  function handleDeleteWall(wallId: string) {
+    setWallDraft((current) => (current ?? []).filter((wall) => wall.id !== wallId));
+  }
+
+  // Krokideki tek tıklama etkileşimi artık sadece duvar çizmek için — stant/
+  // alan yerleştirme "Yerleştirilmemiş Öğeler" tepsisinden seçilip otomatik
+  // getirildikten sonra sürükleyerek yapılıyor (bkz. bringBoothToMap/
+  // bringStageToMap), ayrı bir "krokide bir noktaya dokun" modu yok. Duvar
+  // çizme modunda ilk dokunuş başlangıç noktasını, ikinci dokunuş bitiş
+  // noktasını belirleyip yeni bir duvar çizgisi oluşturuyor.
+  function handleCanvasPress(event: GestureResponderEvent) {
+    if (!wallDrawing) return;
+    const x = (event.nativeEvent.locationX / canvasSize.width) * 100;
+    const y = (event.nativeEvent.locationY / canvasSize.height) * 100;
+
+    // Duvar noktaları serbest yüzdeye değil, referans ızgaranın en yakın
+    // kesişimine yapıştırılıyor — admin elle çizerken çizgiler yamuk
+    // çıkmasın diye (bkz. lib/floorPlanGrid.ts).
+    const snapped = snapToGrid(x, y);
+    if (!wallStart) {
+      setWallStart(snapped);
       return;
     }
-    // base64: true — React Native'in fetch()'i yerel galeri URI'lerini
-    // güvenilir okuyamadığı için (bkz. adminRepository > uploadFloorPlanImage),
-    // resmi doğrudan base64 olarak alıp yüklüyoruz.
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
-      base64: true,
-    });
-    const asset = result.canceled ? null : result.assets?.[0];
-    if (!asset?.base64) {
-      if (!result.canceled) onNotify?.('Seçilen resim okunamadı, tekrar deneyin.');
-      return;
-    }
-    setUploadingFloorPlan(true);
+    const newWall: FloorPlanWall = {
+      id: `wall-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      x1: wallStart.x,
+      y1: wallStart.y,
+      x2: snapped.x,
+      y2: snapped.y,
+    };
+    setWallStart(null);
+    // Sadece taslağa ekleniyor — Supabase'e "Kaydet" (finishWallDrawing)
+    // basılana kadar hiçbir şey yazılmıyor.
+    setWallDraft((current) => [...(current ?? []), newWall]);
+  }
+
+  // "Su Sebili Ekle" — krokinin ortasına varsayılan konumda yeni bir su
+  // sebili oluşturur, admin ardından etiketi sürükleyerek istediği yere
+  // taşır (bkz. handleMoveWaterStation). İstediği kadar tekrar basıp yeni
+  // su sebili ekleyebilir.
+  async function handleAddWaterStation() {
     try {
-      const ok = await uploadFloorPlan(asset.base64, asset.mimeType);
-      onNotify?.(ok ? 'Kroki yüklendi.' : useAdminStore.getState().error || 'Kroki yüklenemedi.');
-    } finally {
-      setUploadingFloorPlan(false);
+      await createWaterStation.mutateAsync({
+        name: `Su Sebili ${waterStations.length + 1}`,
+        mapX: DEFAULT_PLACEMENT.x,
+        mapY: DEFAULT_PLACEMENT.y,
+      });
+      onNotify?.('Yeni su sebili eklendi. Krokideki etiketi sürükleyerek yerini ayarlayabilirsin.');
+    } catch (error) {
+      onNotify?.(error instanceof Error ? error.message : 'Su sebili eklenemedi.');
     }
+  }
+
+  // Su sebili sürükleme de artık stant/sahne ile aynı şekilde SADECE taslağa
+  // yazıyor — anında Supabase'e gitmiyor, "Konumları Kaydet" ile toplu
+  // kaydediliyor (bkz. saveAllPositions).
+  function handleMoveWaterStation(stationId: string, x: number, y: number) {
+    setPendingPosition('water', stationId, x, y);
+  }
+
+  // Kroki kartının içeriği (uyarı çubuğu + yoğunluk skalası + asıl kroki
+  // canvas'ı + yerleştirilmemiş öğeler tepsisi) — bu içerik hem normal
+  // ekranda hem de "Tam Ekran Çiz" modundaki Modal'ın içinde birebir aynı
+  // şekilde kullanılıyor (bkz. focusMode). İkisi aynı anda MONTE OLMUYOR
+  // (JSX'te birbirini dışlıyor), bu yüzden canvasSize ölçümü çakışmıyor.
+  function renderMapCardBody() {
+    // Üstteki uyarı çubuğu artık üç ayrı durumu tek bir yerden yönetiyor —
+    // duvar çizimi, bir yerleştirme hatası, ya da bekleyen konum
+    // değişiklikleri (stant/sahne/su sebili sürüklemesi). Öncelik sırası
+    // önemli: aktif bir duvar çizimi varken bile bir hata gösterilmeli
+    // değil, ama hata yoksa ve bekleyen konum varsa o gösterilsin.
+    const alertMode: 'wall' | 'error' | 'positions' | null = wallDrawing
+      ? 'wall'
+      : placementError
+        ? 'error'
+        : pendingPositionCount > 0
+          ? 'positions'
+          : null;
+    return (
+      <>
+        {alertMode ? (
+          <View style={[styles.repositionAlert, alertMode === 'error' && styles.repositionAlertError]}>
+            <View style={styles.repositionCopy}>
+              <Crosshair size={17} color={colors.white} />
+              <Text style={styles.repositionText}>
+                {alertMode === 'wall'
+                  ? savingWalls
+                    ? 'Duvarlar kaydediliyor…'
+                    : wallStart
+                      ? 'Duvarın bitiş noktasına dokunun.'
+                      : `Duvarın başlangıç noktasına dokunun. İstediğin kadar duvar ekleyebilirsin, hepsi "Kaydet" ile tek seferde kaydedilir (${displayWalls.length}).`
+                  : alertMode === 'error'
+                    ? placementError
+                    : savingPositions
+                      ? 'Konumlar kaydediliyor…'
+                      : `${pendingPositionCount} konum değişikliği henüz kaydedilmedi. İstediğin kadar taşı, bitirince "Kaydet"e dokun.`}
+              </Text>
+            </View>
+            <Pressable
+              style={styles.cancelMove}
+              disabled={savingWalls || savingPositions}
+              onPress={() => {
+                if (alertMode === 'wall') {
+                  handleWallToolPress();
+                } else if (alertMode === 'error') {
+                  setPlacementError(null);
+                } else {
+                  void saveAllPositions();
+                }
+              }}
+            >
+              {savingWalls || savingPositions ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : alertMode === 'error' ? (
+                <X size={14} color={colors.primary} />
+              ) : (
+                <Check size={14} color={colors.primary} />
+              )}
+              <Text style={styles.cancelMoveText}>{alertMode === 'error' ? 'Kapat' : 'Kaydet'}</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <DensityLegend />
+
+        <View
+          accessibilityLabel="Etkinlik alan krokisi"
+          onLayout={(event) =>
+            setCanvasSize({
+              width: event.nativeEvent.layout.width,
+              height: event.nativeEvent.layout.height,
+            })
+          }
+          style={[styles.mapCanvas, { aspectRatio: FLOOR_PLAN_ASPECT_RATIO }]}
+        >
+          {/* Referans ızgara: admin duvar çizerken her dokunuş bu ızgaranın
+              en yakın kesişimine yapıştırılıyor (bkz. snapToGrid) — çizgiler
+              bu sayede yamuk/eğri çıkmıyor. Sadece görsel bir kılavuz,
+              dokunmayı engellemiyor. */}
+          <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+            {Array.from({ length: GRID_COLS + 1 }).map((_, index) => (
+              <Line
+                key={`grid-v-${index}`}
+                x1={(index * 100) / GRID_COLS}
+                y1={0}
+                x2={(index * 100) / GRID_COLS}
+                y2={100}
+                stroke="rgba(255,255,255,0.1)"
+                strokeWidth={0.25}
+              />
+            ))}
+            {Array.from({ length: GRID_ROWS + 1 }).map((_, index) => (
+              <Line
+                key={`grid-h-${index}`}
+                x1={0}
+                y1={(index * 100) / GRID_ROWS}
+                x2={100}
+                y2={(index * 100) / GRID_ROWS}
+                stroke="rgba(255,255,255,0.1)"
+                strokeWidth={0.25}
+              />
+            ))}
+          </Svg>
+
+          {!displayWalls.length && !wallDrawing ? (
+            <View pointerEvents="none" style={styles.uploadHint}>
+              <PenLine size={18} color="rgba(255,255,255,0.55)" />
+              <Text style={styles.uploadHintText}>
+                Henüz kroki çizilmedi. Yukarıdaki "Duvar Ekle" butonuyla etkinlik alanının
+                duvarlarını ızgaraya oturarak çizmeye başlayın.
+              </Text>
+            </View>
+          ) : null}
+
+          {/* İnce bir artı çizgisi krokiyi dört bölgeye ayırıyor — sadece
+              görsel bir referans, dokunmayı engellemiyor. */}
+          <View pointerEvents="none" style={styles.centerDividerV} />
+          <View pointerEvents="none" style={styles.centerDividerH} />
+
+          {/* Sabit "giriş kapısı" işareti — taşınamaz/silinemez, krokinin her
+              zaman aynı yerinde duran görsel bir referans (bkz.
+              lib/floorPlanGrid.ts > ENTRANCE_GATE_LINE). Rota bulmaya dahil
+              değil, sadece admin ve katılımcı ekranında tutarlı görünsün diye. */}
+          <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+            <Line
+              x1={ENTRANCE_GATE_LINE.x1}
+              y1={ENTRANCE_GATE_LINE.y1}
+              x2={ENTRANCE_GATE_LINE.x2}
+              y2={ENTRANCE_GATE_LINE.y2}
+              stroke={ENTRANCE_GATE_COLOR}
+              strokeWidth={2.2}
+              strokeLinecap="round"
+            />
+          </Svg>
+          <View pointerEvents="none" style={styles.entranceLabel}>
+            <Text style={styles.entranceLabelText}>{ENTRANCE_GATE_LABEL}</Text>
+          </View>
+
+          {layers.zones
+            ? ZONE_ORDER.map((code) => {
+                const { right, bottom } = zoneQuadrant(code);
+                return (
+                  <View
+                    key={code}
+                    pointerEvents="none"
+                    style={[
+                      styles.zoneCornerTag,
+                      { backgroundColor: ZONE_COLORS[code] },
+                      right ? { right: 10 } : { left: 10 },
+                      bottom ? { bottom: 10 } : { top: 10 },
+                    ]}
+                  >
+                    <Text style={styles.zoneCornerTagText}>{ZONE_LETTER[code]}</Text>
+                  </View>
+                );
+              })
+            : null}
+
+          {displayWalls.length ? (
+            <Svg
+              pointerEvents="none"
+              style={StyleSheet.absoluteFill}
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+            >
+              {displayWalls.map((wall) => (
+                <Line
+                  key={wall.id}
+                  x1={wall.x1}
+                  y1={wall.y1}
+                  x2={wall.x2}
+                  y2={wall.y2}
+                  stroke="#f87171"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                />
+              ))}
+            </Svg>
+          ) : null}
+
+          {wallDrawing
+            ? displayWalls.map((wall) => {
+                const midX = (wall.x1 + wall.x2) / 2;
+                const midY = (wall.y1 + wall.y2) / 2;
+                return (
+                  <Pressable
+                    key={`wall-delete-${wall.id}`}
+                    onPress={() => handleDeleteWall(wall.id)}
+                    style={[styles.wallDeleteHandle, { left: `${midX}%`, top: `${midY}%` }]}
+                  >
+                    <X size={11} color={colors.white} />
+                  </Pressable>
+                );
+              })
+            : null}
+
+          {wallDrawing && wallStart ? (
+            <View
+              pointerEvents="none"
+              style={[styles.wallStartMarker, { left: `${wallStart.x}%`, top: `${wallStart.y}%` }]}
+            />
+          ) : null}
+
+          {/* Su sebilleri — artık krokide etiketi basılı tutup sürükleyerek
+              taşınabiliyor (bkz. handleMoveWaterStation), tıpkı stant/sahne
+              pin'leri gibi. Yeni su sebili eklemek için üstteki "Su Sebili
+              Ekle" butonu kullanılıyor (bkz. handleAddWaterStation); silme/
+              durum takibi hâlâ "Su İstasyonları" sekmesinde. */}
+          {waterStations.map((station) => {
+            const pending = pendingPositions[`water:${station.id}`];
+            const x = pending ? pending.x : station.map_x;
+            const y = pending ? pending.y : station.map_y;
+            return (
+              <DraggablePin
+                key={`water-${station.id}`}
+                x={x}
+                y={y}
+                canvasSize={canvasSize}
+                onSelect={() => {}}
+                onDrop={(nx, ny) => handleMoveWaterStation(station.id, nx, ny)}
+                style={[
+                  styles.waterPin,
+                  station.status !== 'active' && styles.waterPinAlert,
+                  pending && styles.pinPendingSave,
+                ]}
+              >
+                <Droplet size={8} color={colors.white} />
+              </DraggablePin>
+            );
+          })}
+
+          {layers.booths
+            ? booths.filter(isBoothOnCanvas).map((booth) => {
+                const active = selectedBooth?.id === booth.id;
+                const pos = boothMapPosition(booth);
+                const pending = `booth:${booth.id}` in pendingPositions;
+                const zone = isBoothPlaced(booth) ? booth.zone! : zoneForPercent(pos.x, pos.y);
+                return (
+                  <DraggablePin
+                    key={booth.id}
+                    x={pos.x}
+                    y={pos.y}
+                    canvasSize={canvasSize}
+                    onSelect={() => selectBooth(booth)}
+                    onDrop={(x, y) => placeBoothAt(booth, x, y)}
+                    style={[styles.boothPin, active && styles.boothPinSelected, pending && styles.pinPendingSave]}
+                  >
+                    <View style={[styles.boothPulse, { backgroundColor: ZONE_COLORS[zone] }]} />
+                    <Text style={styles.boothPinText} numberOfLines={1}>
+                      {booth.boothNo}
+                    </Text>
+                  </DraggablePin>
+                );
+              })
+            : null}
+
+          {layers.stages
+            ? stages.filter(isStageOnCanvas).map((stage) => {
+                const active = selectedStage?.id === stage.id;
+                const pos = stageMapPosition(stage);
+                const pending = `stage:${stage.id}` in pendingPositions;
+                return (
+                  <DraggablePin
+                    key={stage.id}
+                    x={pos.x}
+                    y={pos.y}
+                    canvasSize={canvasSize}
+                    onSelect={() => selectStage(stage)}
+                    onDrop={(x, y) => moveStageTo(stage, x, y)}
+                    style={[styles.stagePin, active && styles.stagePinSelected, pending && styles.pinPendingSave]}
+                  >
+                    <View style={styles.stagePulse} />
+                    <Text style={styles.stagePinText} numberOfLines={1}>
+                      {shortStageLabel(stage.name)}
+                    </Text>
+                  </DraggablePin>
+                );
+              })
+            : null}
+
+          {wallDrawing ? (
+            <Pressable
+              accessibilityLabel="Krokide duvar noktası seç"
+              onPress={handleCanvasPress}
+              style={[StyleSheet.absoluteFill, styles.placementOverlay]}
+            />
+          ) : null}
+        </View>
+
+        <View style={styles.trayCard}>
+          <View style={styles.trayHeader}>
+            <Text style={styles.trayTitle}>YERLEŞTİRİLMEMİŞ ÖĞELER</Text>
+            <Text style={styles.trayCount}>{unplacedBooths.length + unplacedStages.length}</Text>
+          </View>
+          {unplacedBooths.length + unplacedStages.length === 0 ? (
+            <Text style={styles.trayEmptyText}>
+              Tüm stant ve alanlar krokiye yerleştirildi. Yeni bir stant/alan eklediğinde burada
+              görünür.
+            </Text>
+          ) : (
+            <View style={styles.trayList}>
+              {unplacedBooths.map((booth) => (
+                <Pressable
+                  key={`tray-booth-${booth.id}`}
+                  style={styles.trayChip}
+                  onPress={() => bringBoothToMap(booth)}
+                >
+                  <Store size={13} color={colors.primary} />
+                  <View style={styles.trayChipCopy}>
+                    <Text style={styles.trayChipTitle} numberOfLines={1}>
+                      {booth.companyName || 'Yeni Stand'}
+                    </Text>
+                    <Text style={styles.trayChipSubtitle} numberOfLines={1}>
+                      Stant · Krokiye eklemek için dokun
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+              {unplacedStages.map((stage) => (
+                <Pressable
+                  key={`tray-stage-${stage.id}`}
+                  style={styles.trayChip}
+                  onPress={() => bringStageToMap(stage)}
+                >
+                  <Radio size={13} color={colors.primary} />
+                  <View style={styles.trayChipCopy}>
+                    <Text style={styles.trayChipTitle} numberOfLines={1}>
+                      {stage.name}
+                    </Text>
+                    <Text style={styles.trayChipSubtitle} numberOfLines={1}>
+                      {stage.type} · Krokiye eklemek için dokun
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </View>
+          )}
+        </View>
+      </>
+    );
   }
 
   async function handleExportKroki() {
@@ -706,7 +1269,7 @@ export function AdminMapManagement({
 
     setExporting(true);
     try {
-      const html = buildKrokiHtml(zones, booths, stages, settings.floorPlanUrl, 'Take Off', settings.floorPlanWalls);
+      const html = buildKrokiHtml(zones, booths, stages, 'Take Off', settings.floorPlanWalls);
       const { uri } = await Print.printToFileAsync({ html });
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {
@@ -727,32 +1290,57 @@ export function AdminMapManagement({
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Etkinlik Haritası ve Alan Koordinat Yönetimi</Text>
           <Text style={styles.subtitle}>
-            Stantların krokideki yerleşimi, sahnelerin konumu ve zone yoğunluk katmanları.
-            Yerleştirilmiş bir stant veya sahnenin yerini değiştirmek için etiketini basılı
-            tutup doğrudan sürükleyin — yeni bir stant için ise "Krokiye Yerleştir" ile
-            krokide bir noktaya dokunun. Rota bulma sırasında aradan geçilmemesi gereken
-            duvarları "Duvar Ekle" ile bu krokiye özel olarak işaretleyebilirsin.
+            Krokiyi tamamen elle çiziyorsun: duvarları "Duvar Ekle" ile çiz, istediğin kadar çizgi
+            ekleyip en sonda "Kaydet" ile tek seferde kaydet. Stant/alanları aşağıdaki
+            "Yerleştirilmemiş Öğeler" listesinden seçip krokiye getir, su sebillerini "Su Sebili
+            Ekle" ile ekle, sonra hepsinin etiketini basılı tutup istediğin kadar sürükle — hiçbiri
+            anında kaydedilmez, bitirince "Konumları Kaydet"e basınca hepsi tek seferde kaydedilir.
+            Rota bulma sırasında aradan geçilmemesi gereken duvarları bu krokiye özel olarak
+            işaretleyebilirsin.
           </Text>
           <View style={styles.headerButtonsRow}>
-            <Pressable style={styles.uploadBtn} onPress={handlePickFloorPlan} disabled={uploadingFloorPlan}>
-              {uploadingFloorPlan ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Upload size={14} color={colors.primary} />
-              )}
-              <Text style={styles.uploadBtnText}>
-                {hasFloorPlan ? 'Krokiyi Değiştir' : 'Kroki Yükle'}
-              </Text>
+            <Pressable style={styles.uploadBtn} onPress={() => setFocusMode(true)}>
+              <Maximize2 size={14} color={colors.primary} />
+              <Text style={styles.uploadBtnText}>Tam Ekran Çiz</Text>
             </Pressable>
             <Pressable
               style={[styles.uploadBtn, wallDrawing && styles.wallToolBtnActive]}
-              onPress={toggleWallDrawing}
+              onPress={handleWallToolPress}
+              disabled={savingWalls}
             >
-              <PenLine size={14} color={wallDrawing ? colors.white : colors.primary} />
+              {savingWalls ? (
+                <ActivityIndicator size="small" color={wallDrawing ? colors.white : colors.primary} />
+              ) : (
+                <PenLine size={14} color={wallDrawing ? colors.white : colors.primary} />
+              )}
               <Text style={[styles.uploadBtnText, wallDrawing && styles.wallToolBtnTextActive]}>
-                {wallDrawing
-                  ? `Duvar Ekleniyor · Bitti (${settings.floorPlanWalls.length})`
-                  : `Duvar Ekle (${settings.floorPlanWalls.length})`}
+                {savingWalls
+                  ? 'Kaydediliyor…'
+                  : wallDrawing
+                    ? `Duvarları Kaydet (${displayWalls.length})`
+                    : `Duvar Ekle (${displayWalls.length})`}
+              </Text>
+            </Pressable>
+            <Pressable style={styles.uploadBtn} onPress={handleAddWaterStation} disabled={createWaterStation.isPending}>
+              {createWaterStation.isPending ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Droplet size={14} color={colors.primary} />
+              )}
+              <Text style={styles.uploadBtnText}>Su Sebili Ekle ({waterStations.length})</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.uploadBtn, pendingPositionCount === 0 && styles.uploadBtnDisabled]}
+              onPress={() => void saveAllPositions()}
+              disabled={savingPositions || pendingPositionCount === 0}
+            >
+              {savingPositions ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Check size={14} color={colors.primary} />
+              )}
+              <Text style={styles.uploadBtnText}>
+                {savingPositions ? 'Kaydediliyor…' : `Konumları Kaydet (${pendingPositionCount})`}
               </Text>
             </Pressable>
             <Pressable style={styles.exportBtn} onPress={handleExportKroki} disabled={exporting}>
@@ -793,192 +1381,16 @@ export function AdminMapManagement({
 
       <View style={[styles.mainGrid, wide && styles.mainGridWide]}>
         <View style={[styles.mapCard, wide && styles.mapCardWide]}>
-          {(repositioning && selectedBooth) || wallDrawing ? (
-            <View style={[styles.repositionAlert, placementError && styles.repositionAlertError]}>
-              <View style={styles.repositionCopy}>
-                <Crosshair size={17} color={colors.white} />
-                <Text style={styles.repositionText}>
-                  {wallDrawing
-                    ? wallStart
-                      ? 'Duvarın bitiş noktasına dokunun.'
-                      : 'Duvarın başlangıç noktasına dokunun. İstediğin kadar duvar ekleyebilirsin.'
-                    : placementError || `"${selectedBooth?.companyName}" için krokide bir noktaya dokunun.`}
-                </Text>
-              </View>
-              <Pressable
-                style={styles.cancelMove}
-                onPress={() => {
-                  if (wallDrawing) {
-                    setWallDrawing(false);
-                    setWallStart(null);
-                  } else {
-                    setRepositioning(false);
-                    setPlacementError(null);
-                  }
-                }}
-              >
-                <X size={14} color={colors.primary} />
-                <Text style={styles.cancelMoveText}>{wallDrawing ? 'Bitti' : 'Vazgeç'}</Text>
-              </Pressable>
-            </View>
-          ) : null}
-
-          <DensityLegend />
-
-          <View
-            accessibilityLabel="Etkinlik alan krokisi"
-            onLayout={(event) =>
-              setCanvasSize({
-                width: event.nativeEvent.layout.width,
-                height: event.nativeEvent.layout.height,
-              })
-            }
-            style={[
-              styles.mapCanvas,
-              { aspectRatio: floorPlanAspectRatio },
-              repositioning && styles.mapCanvasMoving,
-            ]}
-          >
-            {hasFloorPlan ? (
-              <Image
-                source={{ uri: settings.floorPlanUrl }}
-                resizeMode="contain"
-                style={StyleSheet.absoluteFill}
-              />
-            ) : null}
-
-            {!hasFloorPlan ? (
-              <View pointerEvents="none" style={styles.uploadHint}>
-                <Upload size={18} color="rgba(255,255,255,0.55)" />
-                <Text style={styles.uploadHintText}>
-                  Henüz gerçek kroki yüklenmedi. Yukarıdaki "Kroki Yükle" butonuyla etkinlik
-                  alanının fotoğrafını ekleyin.
-                </Text>
-              </View>
-            ) : null}
-
-            {/* İnce bir artı çizgisi krokiyi dört bölgeye ayırıyor — sadece
-                görsel bir referans, dokunmayı engellemiyor. */}
-            <View pointerEvents="none" style={styles.centerDividerV} />
-            <View pointerEvents="none" style={styles.centerDividerH} />
-
-            {layers.zones
-              ? ZONE_ORDER.map((code) => {
-                  const { right, bottom } = zoneQuadrant(code);
-                  return (
-                    <View
-                      key={code}
-                      pointerEvents="none"
-                      style={[
-                        styles.zoneCornerTag,
-                        { backgroundColor: ZONE_COLORS[code] },
-                        right ? { right: 10 } : { left: 10 },
-                        bottom ? { bottom: 10 } : { top: 10 },
-                      ]}
-                    >
-                      <Text style={styles.zoneCornerTagText}>{ZONE_LETTER[code]}</Text>
-                    </View>
-                  );
-                })
-              : null}
-
-            {settings.floorPlanWalls.length ? (
-              <Svg
-                pointerEvents="none"
-                style={StyleSheet.absoluteFill}
-                viewBox="0 0 100 100"
-                preserveAspectRatio="none"
-              >
-                {settings.floorPlanWalls.map((wall) => (
-                  <Line
-                    key={wall.id}
-                    x1={wall.x1}
-                    y1={wall.y1}
-                    x2={wall.x2}
-                    y2={wall.y2}
-                    stroke="#f87171"
-                    strokeWidth={1.8}
-                    strokeLinecap="round"
-                  />
-                ))}
-              </Svg>
-            ) : null}
-
-            {wallDrawing
-              ? settings.floorPlanWalls.map((wall) => {
-                  const midX = (wall.x1 + wall.x2) / 2;
-                  const midY = (wall.y1 + wall.y2) / 2;
-                  return (
-                    <Pressable
-                      key={`wall-delete-${wall.id}`}
-                      onPress={() => handleDeleteWall(wall.id)}
-                      style={[styles.wallDeleteHandle, { left: `${midX}%`, top: `${midY}%` }]}
-                    >
-                      <X size={11} color={colors.white} />
-                    </Pressable>
-                  );
-                })
-              : null}
-
-            {wallDrawing && wallStart ? (
-              <View
-                pointerEvents="none"
-                style={[styles.wallStartMarker, { left: `${wallStart.x}%`, top: `${wallStart.y}%` }]}
-              />
-            ) : null}
-
-            {layers.booths
-              ? booths.filter(isBoothPlaced).map((booth) => {
-                  const active = selectedBooth?.id === booth.id;
-                  return (
-                    <DraggablePin
-                      key={booth.id}
-                      x={booth.mapX}
-                      y={booth.mapY}
-                      canvasSize={canvasSize}
-                      onSelect={() => selectBooth(booth)}
-                      onDrop={(x, y) => placeBoothAt(booth, x, y)}
-                      style={[styles.boothPin, active && styles.boothPinSelected]}
-                    >
-                      <View style={[styles.boothPulse, { backgroundColor: ZONE_COLORS[booth.zone!] }]} />
-                      <Text style={styles.boothPinText} numberOfLines={1}>
-                        {booth.boothNo}
-                      </Text>
-                    </DraggablePin>
-                  );
-                })
-              : null}
-
-            {layers.stages
-              ? stages.map((stage) => {
-                  const active = selectedStage?.id === stage.id;
-                  return (
-                    <DraggablePin
-                      key={stage.id}
-                      x={stage.mapX}
-                      y={stage.mapY}
-                      canvasSize={canvasSize}
-                      onSelect={() => selectStage(stage)}
-                      onDrop={(x, y) => moveStageTo(stage, x, y)}
-                      style={[styles.stagePin, active && styles.stagePinSelected]}
-                    >
-                      <View style={styles.stagePulse} />
-                      <Text style={styles.stagePinText} numberOfLines={1}>
-                        {stage.name}
-                      </Text>
-                    </DraggablePin>
-                  );
-                })
-              : null}
-
-            {(repositioning && selectedBooth) || wallDrawing ? (
-              <Pressable
-                accessibilityLabel="Krokide konum seç"
-                onPress={handleCanvasPress}
-                style={[StyleSheet.absoluteFill, styles.placementOverlay]}
-              />
-            ) : null}
-          </View>
+          {focusMode ? (
+            <Pressable style={styles.focusReopenCard} onPress={() => setFocusMode(false)}>
+              <Maximize2 size={18} color={colors.textMuted} />
+              <Text style={styles.focusReopenText}>
+                Kroki şu anda "Tam Ekran Çiz" modunda düzenleniyor. Kapatmak için dokun.
+              </Text>
+            </Pressable>
+          ) : (
+            renderMapCardBody()
+          )}
         </View>
 
         <View style={[styles.inspectorColumn, wide && styles.inspectorColumnWide]}>
@@ -1008,11 +1420,13 @@ export function AdminMapManagement({
                 <InfoLine
                   label="Kroki Konumu:"
                   value={
-                    isBoothPlaced(selectedBooth)
-                      ? `${selectedBooth.zone} · X %${selectedBooth.mapX} · Y %${selectedBooth.mapY}`
+                    isBoothOnCanvas(selectedBooth)
+                      ? `${boothZoneDisplay(selectedBooth)} · X %${boothMapPosition(selectedBooth).x} · Y %${
+                          boothMapPosition(selectedBooth).y
+                        }${`booth:${selectedBooth.id}` in pendingPositions ? ' · kaydedilmedi' : ''}`
                       : 'Henüz yerleştirilmedi'
                   }
-                  valueColor={isBoothPlaced(selectedBooth) ? colors.primary : colors.textMuted}
+                  valueColor={isBoothOnCanvas(selectedBooth) ? colors.primary : colors.textMuted}
                 />
                 <InfoLine
                   label="Ziyaret & Check-in:"
@@ -1020,7 +1434,7 @@ export function AdminMapManagement({
                 />
               </View>
 
-              {isBoothPlaced(selectedBooth) ? (
+              {isBoothOnCanvas(selectedBooth) ? (
                 // Stant zaten krokide bir pin'e sahip — taşıma artık sadece
                 // etiketi sürükleyerek yapılıyor, ayrı bir "yerini değiştir"
                 // butonu/tıkla-yerleştir modu bilinçli olarak kaldırıldı
@@ -1029,24 +1443,17 @@ export function AdminMapManagement({
                 <View style={styles.dragHint}>
                   <Move size={14} color={colors.textMuted} />
                   <Text style={styles.dragHintText}>
-                    Taşımak için krokideki etiketi basılı tutup sürükleyin.
+                    Taşımak için krokideki etiketi basılı tutup sürükleyin. Konum değişiklikleri
+                    "Konumları Kaydet"e basana kadar geçici kalır.
                   </Text>
                 </View>
               ) : (
-                <Pressable
-                  style={[styles.moveButton, repositioning && styles.moveButtonActive]}
-                  onPress={() => {
-                    setPlacementError(null);
-                    setRepositioning((current) => !current);
-                  }}
-                >
+                <Pressable style={styles.moveButton} onPress={() => bringBoothToMap(selectedBooth)}>
                   <Move size={16} color={colors.primary} />
-                  <Text style={styles.moveButtonText}>
-                    {repositioning ? 'Krokide Bir Noktaya Dokunun' : 'Krokiye Yerleştir'}
-                  </Text>
+                  <Text style={styles.moveButtonText}>Krokiye Ekle</Text>
                 </Pressable>
               )}
-              {isBoothPlaced(selectedBooth) ? (
+              {isBoothOnCanvas(selectedBooth) ? (
                 <Pressable style={styles.unplaceButton} onPress={handleUnplace}>
                   <X size={13} color={colors.textMuted} />
                   <Text style={styles.unplaceButtonText}>Krokiden Kaldır</Text>
@@ -1070,7 +1477,7 @@ export function AdminMapManagement({
                   <Radio size={17} color={colors.primary} />
                   <Text style={styles.eyebrow}>SAHNE / SALON DETAYI</Text>
                 </View>
-                <Text style={styles.stageZone}>{selectedStage.zone}</Text>
+                <Text style={styles.stageZone}>{stageZoneDisplay(selectedStage) || 'Yerleştirilmedi'}</Text>
               </View>
               <View>
                 <Text style={styles.stageName}>{selectedStage.name}</Text>
@@ -1080,8 +1487,14 @@ export function AdminMapManagement({
               <View style={styles.infoBox}>
                 <InfoLine
                   label="Kroki Konumu:"
-                  value={`${selectedStage.zone} · X %${selectedStage.mapX} · Y %${selectedStage.mapY}`}
-                  valueColor={colors.primary}
+                  value={
+                    isStageOnCanvas(selectedStage)
+                      ? `${stageZoneDisplay(selectedStage)} · X %${stageMapPosition(selectedStage).x} · Y %${
+                          stageMapPosition(selectedStage).y
+                        }${`stage:${selectedStage.id}` in pendingPositions ? ' · kaydedilmedi' : ''}`
+                      : 'Henüz yerleştirilmedi'
+                  }
+                  valueColor={isStageOnCanvas(selectedStage) ? colors.primary : colors.textMuted}
                 />
                 <InfoLine
                   label="Salon Kapasitesi:"
@@ -1099,12 +1512,27 @@ export function AdminMapManagement({
                   value={selectedStage.status === 'active' ? 'Aktif' : selectedStage.status}
                 />
               </View>
-              <View style={styles.dragHint}>
-                <Move size={14} color={colors.textMuted} />
-                <Text style={styles.dragHintText}>
-                  Taşımak için krokideki etiketi basılı tutup sürükleyin.
-                </Text>
-              </View>
+
+              {isStageOnCanvas(selectedStage) ? (
+                <View style={styles.dragHint}>
+                  <Move size={14} color={colors.textMuted} />
+                  <Text style={styles.dragHintText}>
+                    Taşımak için krokideki etiketi basılı tutup sürükleyin. Konum değişiklikleri
+                    "Konumları Kaydet"e basana kadar geçici kalır.
+                  </Text>
+                </View>
+              ) : (
+                <Pressable style={styles.moveButton} onPress={() => bringStageToMap(selectedStage)}>
+                  <Move size={16} color={colors.primary} />
+                  <Text style={styles.moveButtonText}>Krokiye Ekle</Text>
+                </Pressable>
+              )}
+              {isStageOnCanvas(selectedStage) ? (
+                <Pressable style={styles.unplaceButton} onPress={handleUnplaceStage}>
+                  <X size={13} color={colors.textMuted} />
+                  <Text style={styles.unplaceButtonText}>Krokiden Kaldır</Text>
+                </Pressable>
+              ) : null}
             </View>
           ) : (
             <View style={styles.emptyCard}>
@@ -1196,6 +1624,29 @@ export function AdminMapManagement({
         onClose={() => setZoneModalVisible(false)}
         onNotify={onNotify}
       />
+
+      {/* "Tam Ekran Çiz" modu: admin elle çizim yaparken çok daha geniş bir
+          alanda çalışabilsin diye krokiyi tüm ekranı kaplayan bir Modal'da
+          açıyor. İçerik (renderMapCardBody) normal ekrandakiyle BİREBİR
+          AYNI — yukarıda focusMode true iken normal karttaki gerçek canvas
+          render edilmiyor (sadece bir "kapat" kartı), bu yüzden ikisi aynı
+          anda monte olup canvasSize ölçümünü karıştırmıyor. */}
+      <Modal visible={focusMode} animationType="slide" onRequestClose={() => setFocusMode(false)}>
+        <View style={styles.focusScreen}>
+          <View style={styles.focusHeader}>
+            <Text style={styles.focusHeaderTitle}>Krokiyi Çiz</Text>
+            <Pressable
+              accessibilityLabel="Tam ekran çizimi kapat"
+              style={styles.focusCloseBtn}
+              onPress={() => setFocusMode(false)}
+              hitSlop={8}
+            >
+              <X size={18} color={colors.text} />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.focusScrollContent}>{renderMapCardBody()}</ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1231,6 +1682,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft,
   },
   uploadBtnText: { color: colors.primary, fontSize: 11, fontWeight: '900' },
+  // "Konumları Kaydet" butonu bekleyen bir değişiklik yokken bu şekilde
+  // soluklaştırılıyor — hâlâ basılabilir görünüp kafa karıştırmasın diye.
+  uploadBtnDisabled: { opacity: 0.4 },
   wallToolBtnActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   wallToolBtnTextActive: { color: colors.white },
   layerBar: {
@@ -1282,7 +1736,12 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: colors.surface,
   },
-  mapCardWide: { flex: 2 },
+  // Admin krokiyi tamamen elle çizdiği için kroki kartına mümkün olduğunca
+  // çok yer ayrılıyor — bilgi paneli (inspectorColumnWide) sabit bir üst
+  // sınırda (430) kaldığından geri kalan tüm boşluk krokiye gidiyor (bkz.
+  // AdminWorkspace.tsx > contentWide, geniş ekranlarda sayfanın kendisi de
+  // büyütüldü ki kroki dar bir alana sıkışmasın).
+  mapCardWide: { flex: 5 },
   repositionAlert: {
     minHeight: 46,
     flexDirection: 'row',
@@ -1308,10 +1767,12 @@ const styles = StyleSheet.create({
   },
   cancelMoveText: { color: colors.primary, fontSize: 9, fontWeight: '900' },
   mapCanvas: {
-    // Yükseklik artık sabit değil — krokinin GERÇEK en-boy oranına göre
-    // (bkz. lib/useImageAspectRatio.ts) otomatik hesaplanıyor, katılımcı
-    // ekranıyla birebir aynı oranı kullanmak için (bkz. o dosyadaki
-    // `mapCanvas` stili).
+    // Sabit en-boy oranı (FLOOR_PLAN_ASPECT_RATIO, bkz. lib/floorPlanGrid.ts)
+    // katılımcı ekranıyla (app/(tabs)/map.tsx) birebir aynı — admin'in
+    // çizdiği duvarlar ve yerleştirdiği pinler iki ekranda da tam olarak
+    // aynı noktaya denk geliyor. Kroki artık bir fotoğraf olmadığı için
+    // (tamamen admin'in elle çizdiği bir vektör plan) burada sabit bir
+    // koyu zemin kullanılıyor.
     width: '100%',
     overflow: 'hidden',
     borderWidth: 1,
@@ -1319,7 +1780,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#0f172a',
   },
-  mapCanvasMoving: { borderWidth: 3, borderColor: colors.primary },
   uploadHint: {
     position: 'absolute',
     left: 24,
@@ -1386,31 +1846,56 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.85)',
+    borderColor: colors.white,
   },
   zoneCornerTagText: { color: colors.white, fontSize: 12, fontWeight: '900' },
+  entranceLabel: {
+    position: 'absolute',
+    left: '50%',
+    top: '99%',
+    transform: [{ translateX: -22 }, { translateY: -16 }],
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+    backgroundColor: '#16a34a',
+  },
+  entranceLabelText: { color: colors.white, fontSize: 8, fontWeight: '900', letterSpacing: 0.4 },
+  waterPin: {
+    position: 'absolute',
+    zIndex: 3,
+    width: 15,
+    height: 15,
+    transform: [{ translateX: -7.5 }, { translateY: -7.5 }],
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: colors.white,
+    backgroundColor: '#0ea5e9',
+  },
+  waterPinAlert: { backgroundColor: colors.danger },
   boothPin: {
     position: 'absolute',
     zIndex: 4,
-    maxWidth: 130,
-    minHeight: 26,
-    transform: [{ translateX: -10 }, { translateY: -13 }],
+    maxWidth: 78,
+    minHeight: 19,
+    transform: [{ translateX: -7 }, { translateY: -9.5 }],
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
+    gap: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
     borderWidth: 1,
     borderColor: '#64748b',
-    borderRadius: 8,
+    borderRadius: 6,
     backgroundColor: 'rgba(15,23,42,0.94)',
   },
   boothPinSelected: {
     borderColor: colors.white,
-    transform: [{ translateX: -10 }, { translateY: -13 }, { scale: 1.06 }],
+    transform: [{ translateX: -7 }, { translateY: -9.5 }, { scale: 1.06 }],
   },
-  boothPulse: { width: 7, height: 7, borderRadius: 4 },
-  boothPinText: { flexShrink: 1, color: colors.white, fontSize: 8, fontWeight: '900' },
+  boothPulse: { width: 5, height: 5, borderRadius: 3 },
+  boothPinText: { flexShrink: 1, color: colors.white, fontSize: 7, fontWeight: '900' },
   pinDragging: {
     zIndex: 20,
     borderColor: colors.white,
@@ -1420,6 +1905,14 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
     elevation: 8,
+  },
+  // Konumu taslakta değişmiş ama henüz "Konumları Kaydet"e basılmamış bir
+  // stant/sahne/su sebili pin'ini kesikli turuncu bir çerçeveyle işaretler —
+  // admin hangi öğelerin kaydedilmeyi beklediğini krokiye bakarak görebilsin.
+  pinPendingSave: {
+    borderColor: '#f59e0b',
+    borderWidth: 2,
+    borderStyle: 'dashed',
   },
   legendRow: {
     flexDirection: 'row',
@@ -1436,24 +1929,25 @@ const styles = StyleSheet.create({
   stagePin: {
     position: 'absolute',
     zIndex: 4,
-    maxWidth: 150,
-    minHeight: 28,
-    transform: [{ translateX: -12 }, { translateY: -14 }],
+    maxWidth: 88,
+    minHeight: 20,
+    transform: [{ translateX: -8 }, { translateY: -10 }],
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 8,
+    gap: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
     borderWidth: 1,
     borderColor: '#64748b',
-    borderRadius: 9,
+    borderRadius: 7,
     backgroundColor: 'rgba(15,23,42,0.94)',
   },
   stagePinSelected: {
     borderColor: colors.primary,
-    transform: [{ translateX: -12 }, { translateY: -14 }, { scale: 1.06 }],
+    transform: [{ translateX: -8 }, { translateY: -10 }, { scale: 1.06 }],
   },
-  stagePulse: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#34d399' },
-  stagePinText: { flexShrink: 1, color: colors.white, fontSize: 8, fontWeight: '800' },
+  stagePulse: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#34d399' },
+  stagePinText: { flexShrink: 1, color: colors.white, fontSize: 7, fontWeight: '800' },
   inspectorColumn: { gap: 14 },
   inspectorColumnWide: { flex: 1, minWidth: 315, maxWidth: 430 },
   inspectorCard: {
@@ -1680,6 +2174,83 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
+  // "Yerleştirilmemiş Öğeler" tepsisi — kroki canvas'ının hemen altında,
+  // admin'in yeni eklediği (henüz krokiye getirilmemiş) stant/alanları
+  // listeler. Bir chip'e dokunmak onu otomatik olarak krokiye getirir (bkz.
+  // bringBoothToMap/bringStageToMap), admin sonra sürükleyerek yerini ayarlar.
+  trayCard: {
+    marginTop: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 14,
+    backgroundColor: colors.surfaceMuted,
+    gap: 8,
+  },
+  trayHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  trayTitle: { color: colors.textMuted, fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
+  trayCount: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: '900',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: colors.primarySoft,
+    overflow: 'hidden',
+  },
+  trayEmptyText: { color: colors.textFaint, fontSize: 11, lineHeight: 16 },
+  trayList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  trayChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    maxWidth: 220,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+    backgroundColor: colors.surface,
+  },
+  trayChipCopy: { minWidth: 0 },
+  trayChipTitle: { color: colors.text, fontSize: 11, fontWeight: '800' },
+  trayChipSubtitle: { color: colors.textFaint, fontSize: 9, marginTop: 1 },
+  // "Tam Ekran Çiz" modu — admin krokiyi elle çizerken çok daha geniş bir
+  // alanda çalışabilsin diye tüm ekranı kaplayan bir Modal (bkz.
+  // renderMapCardBody/focusMode).
+  focusReopenCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 20,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.border,
+    borderRadius: 16,
+    backgroundColor: colors.surfaceMuted,
+  },
+  focusReopenText: { flex: 1, color: colors.textMuted, fontSize: 12, lineHeight: 17, fontWeight: '700' },
+  focusScreen: { flex: 1, backgroundColor: colors.background },
+  focusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  focusHeaderTitle: { color: colors.text, fontSize: 17, fontWeight: '900' },
+  focusCloseBtn: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: colors.surfaceMuted,
+  },
+  focusScrollContent: { padding: 16, paddingBottom: 40 },
 });
 
 const modalStyles = StyleSheet.create({

@@ -76,7 +76,13 @@ export interface AdminStage {
     | 'Meeting Area'
     | 'Food Area'
     | 'Diğer';
-  zone: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D';
+  // null ise alan/sahne henüz krokiye (etkinlik alanı yerleşim planı)
+  // yerleştirilmemiş demektir — tıpkı AdminBooth.zone gibi (bkz.
+  // lib/boothGrid.ts > isBoothPlaced/isStagePlaced). Yeni oluşturulan bir
+  // alan/sahne artık otomatik olarak krokinin merkezine eklenmiyor, admin
+  // Harita Yönetimi ekranındaki "Yerleştirilmemiş Öğeler" listesinden seçip
+  // krokiye getirene kadar burada null kalıyor.
+  zone: 'Zone A' | 'Zone B' | 'Zone C' | 'Zone D' | null;
   capacity: number;
   currentOccupancy: number;
   mapX: number; // 0-100%

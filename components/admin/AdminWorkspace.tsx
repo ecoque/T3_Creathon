@@ -648,7 +648,7 @@ export function AdminWorkspace() {
           </View>
           <ScrollView
             style={s.scroll}
-            contentContainerStyle={s.content}
+            contentContainerStyle={[s.content, view === 'map_management' && s.contentWide]}
             keyboardShouldPersistTaps="handled"
           >
             {store.status === 'idle' || store.status === 'loading' ? (
@@ -1010,6 +1010,14 @@ const s = StyleSheet.create({
   main: { flex: 1, minWidth: 0 },
   scroll: { flex: 1 },
   content: { width: '100%', maxWidth: 1580, alignSelf: 'center', padding: 20, paddingBottom: 55 },
+  // Harita Yönetimi ekranı krokiyi tamamen elle çizmek için mümkün olduğunca
+  // geniş bir alana ihtiyaç duyuyor — admin geniş bir monitörde çalışırken
+  // sayfanın büyük kısmı boşta kalmasın diye bu ekranda genel 1580 sınırı
+  // kaldırılıp çok daha yüksek bir üst sınıra çıkarılıyor (bkz.
+  // AdminMapManagement.tsx > mapCardWide). `width: '100%'` sayesinde daha dar
+  // ekranlarda zaten hiçbir fark yaratmıyor, sadece geniş ekranlarda ekstra
+  // alan açıyor.
+  contentWide: { maxWidth: 2600 },
   stack: { gap: 18 },
   flex: { flex: 1, minWidth: 0 },
   sidebar: {

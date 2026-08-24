@@ -10,13 +10,11 @@
 // bağımlılığı içermiyor, bu yüzden hem UI hem de repository katmanından
 // güvenle kullanılabiliyor.
 
-import type { AdminBooth } from '../types/admin';
+import type { AdminBooth, AdminStage } from '../types/admin';
 
-export type ZoneCode = NonNullable<AdminBooth['zone']>;
+export const ZONE_ORDER: AdminBooth['zone'][] = ['Zone A', 'Zone B', 'Zone C', 'Zone D'];
 
-export const ZONE_ORDER: ZoneCode[] = ['Zone A', 'Zone B', 'Zone C', 'Zone D'];
-
-export const ZONE_LETTER: Record<ZoneCode, string> = {
+export const ZONE_LETTER: Record<AdminBooth['zone'], string> = {
   'Zone A': 'A',
   'Zone B': 'B',
   'Zone C': 'C',
@@ -24,7 +22,7 @@ export const ZONE_LETTER: Record<ZoneCode, string> = {
 };
 
 // Her zone kendi yüzler basamağından başlıyor: A 101, B 201, C 301, D 401.
-export const ZONE_BASE_NUMBER: Record<ZoneCode, number> = {
+export const ZONE_BASE_NUMBER: Record<AdminBooth['zone'], number> = {
   'Zone A': 101,
   'Zone B': 201,
   'Zone C': 301,
@@ -33,7 +31,7 @@ export const ZONE_BASE_NUMBER: Record<ZoneCode, number> = {
 
 // Krokideki dört bölge, alanın hangi çeyreğine denk geliyor — sadece
 // köşedeki küçük "A/B/C/D" etiketini konumlandırmak için kullanılıyor.
-export function zoneQuadrant(zone: ZoneCode) {
+export function zoneQuadrant(zone: AdminBooth['zone']) {
   const index = ZONE_ORDER.indexOf(zone);
   return { right: index % 2 === 1, bottom: index > 1 };
 }
@@ -43,8 +41,8 @@ export function zoneQuadrant(zone: ZoneCode) {
 // Bir stant silinse veya başka zone'a taşınsa bile numaralar geri kullanılmaz
 // (gerçek etkinliklerdeki stant numaralandırma mantığıyla tutarlı).
 export function nextBoothNumber(
-  zone: ZoneCode,
-  existingBoothNos: (string | null | undefined)[],
+  zone: AdminBooth['zone'],
+  existingBoothNos: Array<string | null | undefined>,
 ) {
   const letter = ZONE_LETTER[zone];
   const base = ZONE_BASE_NUMBER[zone];
@@ -61,15 +59,22 @@ export function nextBoothNumber(
 // krokide bir noktaya yerleştirilmemiş demektir — bkz. adminRepository >
 // saveBooth/placeBooth ("yeni/henüz yerleştirilmemiş bir standa asla sahte
 // bir zone atanmıyor").
-export function isBoothPlaced(booth: AdminBooth): booth is AdminBooth & { zone: ZoneCode } {
+export function isBoothPlaced(booth: Pick<AdminBooth, 'zone'>) {
   return booth.zone != null;
+}
+
+// isBoothPlaced ile birebir aynı kontrol (zone atanmışsa krokiye
+// yerleştirilmiş demektir) — sahneler/alanlar için okunabilirlik amacıyla
+// ayrı bir isimle dışa aktarılıyor. Bkz. types/admin.ts > AdminStage.zone.
+export function isStagePlaced(stage: Pick<AdminStage, 'zone'>) {
+  return stage.zone != null;
 }
 
 // zoneQuadrant'ın tersi: krokideki bir yüzde koordinatının (x, y — 0-100)
 // hangi zone'un içine düştüğünü bulur. Hem stantlar hem de oturum yerleri
 // (stage) krokiye serbestçe yerleştirildiğinde hangi zone'a ait sayılacakları
 // bu şekilde otomatik belirleniyor.
-export function zoneForPercent(xPercent: number, yPercent: number): ZoneCode {
+export function zoneForPercent(xPercent: number, yPercent: number): AdminBooth['zone'] {
   const right = xPercent >= 50;
   const bottom = yPercent >= 50;
   return ZONE_ORDER[(bottom ? 2 : 0) + (right ? 1 : 0)];
@@ -78,7 +83,7 @@ export function zoneForPercent(xPercent: number, yPercent: number): ZoneCode {
 // Zone başına tek bir vurgu rengi — admin Harita Yönetimi ekranı ve
 // katılımcı (girişimci/yatırımcı/kurum/ziyaretçi) harita ekranı aynı
 // paleti kullanır ki ikisi görsel olarak birebir tutarlı olsun.
-export const ZONE_COLORS: Record<ZoneCode, string> = {
+export const ZONE_COLORS: Record<AdminBooth['zone'] & string, string> = {
   'Zone A': '#60a5fa',
   'Zone B': '#fb923c',
   'Zone C': '#34d399',

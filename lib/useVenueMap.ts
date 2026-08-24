@@ -61,7 +61,10 @@ function mapStageRow(row: Row): AdminStage {
     id: row.id,
     name: row.name,
     type: (row.type || 'Diğer') as AdminStage['type'],
-    zone: zoneForPercent(mapX, mapY),
+    // zone_id null ise (henüz krokiye yerleştirilmemiş) zone de null kalmalı
+    // — bkz. lib/boothGrid.ts > isStagePlaced. Katılımcı ekranı henüz
+    // yerleştirilmemiş alanları hiç göstermemeli (bkz. app/(tabs)/map.tsx).
+    zone: row.zone_id ? zoneForPercent(mapX, mapY) : null,
     capacity: Number(row.capacity || 0),
     currentOccupancy: Number(row.current_occupancy || 0),
     mapX,

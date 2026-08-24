@@ -442,8 +442,9 @@ export function BoothEditorModal({
             : 'Henüz yerleştirilmedi'}
         </Text>
         <Text style={styles.placementNoteHint}>
-          Stand no ve konum, Harita Yönetimi &gt; Kroki ekranından atanır — bölgeye göre otomatik
-          numaralandırılır (örn. Zone A'daki ilk stant A101).
+          Stand no ve konum, Harita Yönetimi ekranındaki "Yerleştirilmemiş Öğeler" listesinden seçip
+          krokiye getirdikten sonra sürükleyerek atanır — bölgeye göre otomatik numaralandırılır
+          (örn. Zone A'daki ilk stant A101).
         </Text>
       </View>
       <Field
@@ -554,12 +555,15 @@ export function StageEditorModal({
         <Text style={styles.placementNoteLabel}>KROKİ KONUMU</Text>
         <Text style={styles.placementNoteValue}>
           {stage
-            ? `${stage.zone} · X %${stage.mapX} · Y %${stage.mapY}`
-            : 'Kaydedince merkeze eklenir'}
+            ? stage.zone
+              ? `${stage.zone} · X %${stage.mapX} · Y %${stage.mapY}`
+              : 'Henüz krokiye yerleştirilmedi'
+            : 'Kaydedince "Yerleştirilmemiş Öğeler" listesine eklenir'}
         </Text>
         <Text style={styles.placementNoteHint}>
-          Konum ve bölge, Harita Yönetimi ekranından krokiye dokunarak ayarlanır — bölge, dokunulan
-          noktaya göre otomatik belirlenir.
+          Konum ve bölge, Harita Yönetimi ekranındaki "Yerleştirilmemiş Öğeler" listesinden seçip
+          krokiye getirdikten sonra sürükleyerek ayarlanır — bölge, bırakılan noktaya göre otomatik
+          belirlenir.
         </Text>
       </View>
       <Field label="Alan adı *" value={name} onChangeText={setName} />

@@ -29,6 +29,7 @@ type AdminWorkspaceState = AdminWorkspaceData & {
   saveStage: (data: Partial<AdminStage>, editingId?: string) => Promise<boolean>;
   deleteStage: (id: string) => Promise<boolean>;
   updateStagePosition: (id: string, mapX: number, mapY: number) => Promise<boolean>;
+  unplaceStage: (stageId: string) => Promise<boolean>;
   saveZone: (data: Partial<ZoneDensityInfo>, editingId?: string) => Promise<boolean>;
   deleteZone: (id: string) => Promise<boolean>;
   saveBooth: (data: Partial<AdminBooth>, editingId?: string) => Promise<boolean>;
@@ -145,6 +146,7 @@ export const useAdminStore = create<AdminWorkspaceState>((set, get) => {
     deleteStage: (id) => mutate(() => adminRepository.deleteStage(id)),
     updateStagePosition: (id, mapX, mapY) =>
       mutate(() => adminRepository.updateStagePosition(id, mapX, mapY, get().zones)),
+    unplaceStage: (stageId) => mutate(() => adminRepository.unplaceStage(stageId, get().stages)),
 
     saveZone: (data, editingId) =>
       mutate(() => {

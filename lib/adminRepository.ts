@@ -266,7 +266,10 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
     id: row.id,
     name: row.name,
     type: (row.type || 'Diğer') as AdminStage['type'],
-    zone: zoneById.get(row.zone_id) || 'Zone A',
+    // row.zone_id null ise (henüz krokiye yerleştirilmemiş) zone de null
+    // kalmalı — isStagePlaced bu alana bakıyor (bkz. lib/boothGrid.ts),
+    // tıpkı stantlardaki (booths) mantığın birebir aynısı.
+    zone: row.zone_id ? zoneById.get(row.zone_id) || null : null,
     capacity: Number(row.capacity || 0),
     currentOccupancy: Number(row.current_occupancy || 0),
     mapX: Number(row.map_x ?? 50),
@@ -512,15 +515,21 @@ export const adminRepository = {
 
   async saveStage(data: Partial<AdminStage>, zones: ZoneDensityInfo[], editingId?: string) {
     // Zone artık bu formdan manuel seçilmiyor — krokideki gerçek konumdan
-    // (mapX/mapY) otomatik türetiliyor, tıpkı updateStagePosition'da olduğu
-    // gibi. Böylece yeni bir alan için gösterilen "Zone D" (varsayılan merkez
-    // nokta) ile veritabanına yazılan zone_id her zaman tutarlı kalır.
+    // (mapX/mapY) otomatik türetiliyor (bkz. updateStagePosition). Yeni bir
+    // alan/sahne için data.zone hiç gelmez (StageEditorModal formu bunu
+    // toplamıyor) — bu durumda zone_id null kalır ve alan "yerleştirilmemiş"
+    // sayılır (bkz. isStagePlaced), tıpkı yeni bir stant gibi: admin Harita
+    // Yönetimi ekranındaki "Yerleştirilmemiş Öğeler" listesinden seçip
+    // krokiye getirene kadar haritada görünmez. Zaten yerleştirilmiş bir
+    // alanı düzenlerken current.zone/current.mapX/mapY spread ile korunur
+    // (bkz. adminDbStore.saveStage), bu yüzden burada yanlışlıkla
+    // "yerleştirilmemiş"e geri düşmez.
     const mapX = data.mapX ?? 50;
     const mapY = data.mapY ?? 50;
     const payload = {
       name: data.name || 'Yeni Alan',
       type: data.type || 'Other',
-      zone_id: zoneIdFor(data.zone || zoneForPercent(mapX, mapY), zones),
+      zone_id: data.zone ? zoneIdFor(data.zone, zones) : null,
       capacity: data.capacity || 0,
       current_occupancy: data.currentOccupancy || 0,
       map_x: mapX,
@@ -558,6 +567,20 @@ export const adminRepository = {
       .eq('id', id);
     ensure(result, 'Alan konumu güncellenemedi');
     await writeLog('Alan krokide konumlandırıldı', id, 'stage');
+  },
+
+  // Bir alanı/sahneyi krokiden kaldırır (silmez) — unplaceBooth ile birebir
+  // aynı mantık: alan "Yerleştirilmedi" durumuna döner ve admin Harita
+  // Yönetimi ekranındaki "Yerleştirilmemiş Öğeler" listesinden tekrar
+  // krokiye getirilebilir.
+  async unplaceStage(id: string, stages: AdminStage[]) {
+    const target = stages.find((stage) => stage.id === id);
+    const result = await supabase
+      .from('stages')
+      .update({ zone_id: null, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    ensure(result, 'Alan krokiden kaldırılamadı');
+    await writeLog('Alan krokiden kaldırıldı', target?.name || id, 'stage');
   },
 
   async saveZone(data: Partial<ZoneDensityInfo>, editingId?: string) {

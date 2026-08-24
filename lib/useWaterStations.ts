@@ -82,6 +82,22 @@ export function useCreateWaterStation() {
   });
 }
 
+// Admin, Harita Yönetimi ekranındaki krokide bir su sebili etiketini
+// sürükleyip bıraktığında konumunu günceller (bkz. AdminMapManagement.tsx >
+// DraggablePin) — stant/sahne sürüklemesiyle (placeBooth/updateStagePosition)
+// birebir aynı desen. Su sebilinin adı artık "Su İstasyonları" sekmesinde
+// olduğu gibi sabit merkezde kalmıyor, admin krokide istediği yere taşıyabilir.
+export function useUpdateWaterStationPosition() {
+  const invalidate = useInvalidateWaterStations();
+  return useMutation({
+    mutationFn: async ({ stationId, mapX, mapY }: { stationId: string; mapX: number; mapY: number }) => {
+      const result = await supabase.from('water_stations').update({ map_x: mapX, map_y: mapY }).eq('id', stationId);
+      if (result.error) throw result.error;
+    },
+    onSuccess: invalidate,
+  });
+}
+
 export function useDeleteWaterStation() {
   const invalidate = useInvalidateWaterStations();
   return useMutation({
