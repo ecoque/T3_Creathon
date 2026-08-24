@@ -12,9 +12,11 @@
 
 import type { AdminBooth } from '../types/admin';
 
-export const ZONE_ORDER: AdminBooth['zone'][] = ['Zone A', 'Zone B', 'Zone C', 'Zone D'];
+export type ZoneCode = NonNullable<AdminBooth['zone']>;
 
-export const ZONE_LETTER: Record<AdminBooth['zone'], string> = {
+export const ZONE_ORDER: ZoneCode[] = ['Zone A', 'Zone B', 'Zone C', 'Zone D'];
+
+export const ZONE_LETTER: Record<ZoneCode, string> = {
   'Zone A': 'A',
   'Zone B': 'B',
   'Zone C': 'C',
@@ -22,7 +24,7 @@ export const ZONE_LETTER: Record<AdminBooth['zone'], string> = {
 };
 
 // Her zone kendi yüzler basamağından başlıyor: A 101, B 201, C 301, D 401.
-export const ZONE_BASE_NUMBER: Record<AdminBooth['zone'], number> = {
+export const ZONE_BASE_NUMBER: Record<ZoneCode, number> = {
   'Zone A': 101,
   'Zone B': 201,
   'Zone C': 301,
@@ -31,7 +33,7 @@ export const ZONE_BASE_NUMBER: Record<AdminBooth['zone'], number> = {
 
 // Krokideki dört bölge, alanın hangi çeyreğine denk geliyor — sadece
 // köşedeki küçük "A/B/C/D" etiketini konumlandırmak için kullanılıyor.
-export function zoneQuadrant(zone: AdminBooth['zone']) {
+export function zoneQuadrant(zone: ZoneCode) {
   const index = ZONE_ORDER.indexOf(zone);
   return { right: index % 2 === 1, bottom: index > 1 };
 }
@@ -41,8 +43,8 @@ export function zoneQuadrant(zone: AdminBooth['zone']) {
 // Bir stant silinse veya başka zone'a taşınsa bile numaralar geri kullanılmaz
 // (gerçek etkinliklerdeki stant numaralandırma mantığıyla tutarlı).
 export function nextBoothNumber(
-  zone: AdminBooth['zone'],
-  existingBoothNos: Array<string | null | undefined>,
+  zone: ZoneCode,
+  existingBoothNos: (string | null | undefined)[],
 ) {
   const letter = ZONE_LETTER[zone];
   const base = ZONE_BASE_NUMBER[zone];
@@ -59,7 +61,7 @@ export function nextBoothNumber(
 // krokide bir noktaya yerleştirilmemiş demektir — bkz. adminRepository >
 // saveBooth/placeBooth ("yeni/henüz yerleştirilmemiş bir standa asla sahte
 // bir zone atanmıyor").
-export function isBoothPlaced(booth: Pick<AdminBooth, 'zone'>) {
+export function isBoothPlaced(booth: AdminBooth): booth is AdminBooth & { zone: ZoneCode } {
   return booth.zone != null;
 }
 
@@ -67,7 +69,7 @@ export function isBoothPlaced(booth: Pick<AdminBooth, 'zone'>) {
 // hangi zone'un içine düştüğünü bulur. Hem stantlar hem de oturum yerleri
 // (stage) krokiye serbestçe yerleştirildiğinde hangi zone'a ait sayılacakları
 // bu şekilde otomatik belirleniyor.
-export function zoneForPercent(xPercent: number, yPercent: number): AdminBooth['zone'] {
+export function zoneForPercent(xPercent: number, yPercent: number): ZoneCode {
   const right = xPercent >= 50;
   const bottom = yPercent >= 50;
   return ZONE_ORDER[(bottom ? 2 : 0) + (right ? 1 : 0)];
@@ -76,7 +78,7 @@ export function zoneForPercent(xPercent: number, yPercent: number): AdminBooth['
 // Zone başına tek bir vurgu rengi — admin Harita Yönetimi ekranı ve
 // katılımcı (girişimci/yatırımcı/kurum/ziyaretçi) harita ekranı aynı
 // paleti kullanır ki ikisi görsel olarak birebir tutarlı olsun.
-export const ZONE_COLORS: Record<AdminBooth['zone'] & string, string> = {
+export const ZONE_COLORS: Record<ZoneCode, string> = {
   'Zone A': '#60a5fa',
   'Zone B': '#fb923c',
   'Zone C': '#34d399',
