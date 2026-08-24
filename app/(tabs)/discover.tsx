@@ -1,6 +1,7 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, Handshake, Search, Sparkles, SlidersHorizontal } from 'lucide-react-native';
-import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { router } from 'expo-router';
+import { Bookmark, BookmarkCheck, Calendar, ChevronRight, FolderPlus, Handshake, Search, Sparkles, SlidersHorizontal } from 'lucide-react-native';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FlatList, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -12,61 +13,95 @@ import { ScheduleMeetingModal } from '../../components/modals/ScheduleMeetingMod
 import { WhyMatchModal } from '../../components/modals/WhyMatchModal';
 import { ROLES, ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
+import { isCorporateSchemaMissing } from '../../features/corporate/schema';
+import { isInvestorSchemaMissing } from '../../features/investor/schema';
 import { computeMatchScore, localizeMatchReasons } from '../../features/matching/scoring';
-import { supabase } from '../../lib/supabase';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
+import { useInvestorCoreFlow } from '../../lib/useInvestorCoreFlow';
+import { useOtherProfiles } from '../../lib/useOtherProfiles';
 import type { ParticipantRole, Profile } from '../../types';
-
-async function fetchOtherProfiles(myUserId: string): Promise<Profile[]> {
-  const { data, error } = await supabase.from('profiles').select('*').neq('user_id', myUserId);
-  if (error) throw error;
-  return (data ?? []) as Profile[];
-}
+import { VisitorAgendaScreen } from '../../features/visitor/VisitorAgendaScreen';
 
 function initialsFor(name?: string) {
   if (!name) return '?';
   return name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]?.toUpperCase()).join('');
 }
 
-export default function DiscoverScreen() {
+function ParticipantDiscoverScreen() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: meResult } = useCurrentProfile();
   const myProfile = meResult?.profile ?? null;
 
-  const { data: participants = [] } = useQuery({
-    queryKey: ['profiles', 'others', meResult?.userId],
-    queryFn: () => fetchOtherProfiles(meResult!.userId),
-    enabled: !!meResult?.userId,
-  });
+  const { data: participants = [], isLoading: participantsLoading, error: participantsError } = useOtherProfiles();
 
   const [search, setSearch] = useState('');
   const [quickRole, setQuickRole] = useState<ParticipantRole | 'all'>('all');
   const [filter, setFilter] = useState<FilterOptions>({ roles: [], sector: '', interests: [] });
   const [filterOpen, setFilterOpen] = useState(false);
   const [connectedIds, setConnectedIds] = useState<Set<string>>(new Set());
+  const [shortlistOnly, setShortlistOnly] = useState(false);
 
   const [whyMatchProfile, setWhyMatchProfile] = useState<Profile | null>(null);
   const [detailProfile, setDetailProfile] = useState<Profile | null>(null);
   const [scheduleFor, setScheduleFor] = useState<Profile | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const isInvestor = myProfile?.role === 'yatirimci';
+  const isEntrepreneur = myProfile?.role === 'girisimci';
+  const isCorporate = myProfile?.role === 'kurum';
+  const corporateSchemaUnavailable = isCorporate && (
+    myProfile.technology_need_summary === undefined
+    || myProfile.technology_need_areas === undefined
+  );
+  const shortlist = useInvestorCoreFlow(meResult?.userId, isInvestor);
+  const allowedRoleOptions = useMemo<ParticipantRole[]>(
+    () => isInvestor || isCorporate
+      ? ['girisimci', 'kurum']
+      : isEntrepreneur
+        ? ['girisimci', 'kurum', 'yatirimci']
+        : ROLES,
+    [isCorporate, isEntrepreneur, isInvestor],
+  );
+
+  useEffect(() => {
+    setQuickRole((current) => current === 'all' || allowedRoleOptions.includes(current) ? current : 'all');
+    setFilter((current) => {
+      const roles = current.roles.filter((role) => allowedRoleOptions.includes(role));
+      return roles.length === current.roles.length ? current : { ...current, roles };
+    });
+  }, [allowedRoleOptions]);
+
+  const visibleParticipants = useMemo(
+    () => isInvestor
+      ? participants.filter((profile) => ['girisimci', 'kurum'].includes(profile.role) && profile.status === 'active')
+      : isEntrepreneur
+        ? participants.filter((profile) => ['girisimci', 'kurum', 'yatirimci'].includes(profile.role) && profile.status !== 'passive')
+        : isCorporate
+          ? participants.filter((profile) => ['girisimci', 'kurum'].includes(profile.role) && profile.status === 'active')
+        : participants,
+    [isCorporate, isEntrepreneur, isInvestor, participants],
+  );
 
   const scored = useMemo(() => {
     if (!myProfile) return [];
-    return participants.map((p) => ({ profile: p, ...computeMatchScore(myProfile, p) }));
-  }, [participants, myProfile]);
+    return visibleParticipants.map((profile) => {
+      const result = computeMatchScore(myProfile, profile);
+      return { profile, ...result, reasons: localizeMatchReasons(result, t) };
+    });
+  }, [visibleParticipants, myProfile, t]);
 
   const sectorOptions = useMemo(
-    () => Array.from(new Set(participants.map((p) => p.sector).filter(Boolean))) as string[],
-    [participants],
+    () => Array.from(new Set(visibleParticipants.map((p) => p.sector).filter(Boolean))) as string[],
+    [visibleParticipants],
   );
   const interestOptions = useMemo(
-    () => Array.from(new Set(participants.flatMap((p) => p.interests))),
-    [participants],
+    () => Array.from(new Set(visibleParticipants.flatMap((p) => p.interests))),
+    [visibleParticipants],
   );
 
   const filtered = scored.filter(({ profile }) => {
+    if (isInvestor && shortlistOnly && !shortlist.profileIds.has(profile.id)) return false;
     if (quickRole !== 'all' && profile.role !== quickRole) return false;
     if (filter.roles.length > 0 && !filter.roles.includes(profile.role)) return false;
     if (filter.sector && profile.sector?.toLowerCase() !== filter.sector.toLowerCase()) return false;
@@ -78,14 +113,22 @@ export default function DiscoverScreen() {
     }
     if (search.trim()) {
       const q = search.toLowerCase();
-      const hay = `${profile.full_name} ${profile.sector ?? ''} ${profile.interests.join(' ')}`.toLowerCase();
+      const hay = `${profile.full_name} ${profile.company ?? ''} ${profile.title ?? ''} ${profile.sector ?? ''} ${profile.interests.join(' ')} ${profile.goals.join(' ')}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
 
-  const featured = filtered.filter((f) => f.score >= 40).sort((a, b) => b.score - a.score);
-  const others = filtered.filter((f) => f.score < 40);
+  // Keep both sections score-ordered. Founder matches can be useful before
+  // they reach the high-confidence threshold, so surface the best available
+  // candidates instead of leaving the recommendation area empty.
+  const rankedMatches = [...filtered].sort((a, b) => b.score - a.score);
+  const highConfidenceMatches = rankedMatches.filter((match) => match.score >= 40);
+  const featured = highConfidenceMatches.length > 0
+    ? highConfidenceMatches
+    : rankedMatches.slice(0, 3);
+  const featuredIds = new Set(featured.map((match) => match.profile.id));
+  const others = rankedMatches.filter((match) => !featuredIds.has(match.profile.id));
   const isFilterActive = filter.roles.length > 0 || filter.sector !== '' || filter.interests.length > 0;
 
   function toggleConnect(userId: string) {
@@ -96,6 +139,21 @@ export default function DiscoverScreen() {
       return next;
     });
   }
+
+  async function toggleShortlist(profileId: string) {
+    try {
+      if (shortlist.profileIds.has(profileId)) await shortlist.remove(profileId);
+      else await shortlist.add(profileId);
+    } catch {
+      // Mutation errors are exposed by the hook and rendered below.
+    }
+  }
+
+  const shortlistErrorMessage = shortlist.error
+    ? isInvestorSchemaMissing(shortlist.error)
+      ? t('investor.migrationRequired')
+      : t('investor.shortlistError', { message: shortlist.error instanceof Error ? shortlist.error.message : String(shortlist.error) })
+    : null;
 
   return (
     <View style={styles.screen}>
@@ -115,7 +173,7 @@ export default function DiscoverScreen() {
             <View style={styles.titleRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.title}>{t('matching.title')}</Text>
-                <Text style={styles.subtitle}>{t('matching.subtitle')}</Text>
+                <Text style={styles.subtitle}>{t(isInvestor ? 'investor.discoverySubtitle' : isEntrepreneur ? 'entrepreneur.discoverySubtitle' : isCorporate ? 'corporate.discoverySubtitle' : 'matching.subtitle')}</Text>
               </View>
               <Pressable
                 style={[styles.filterBtn, isFilterActive && styles.filterBtnActive]}
@@ -136,30 +194,51 @@ export default function DiscoverScreen() {
               />
             </View>
 
-            <FlatList
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              data={['all', ...ROLES] as (ParticipantRole | 'all')[]}
-              keyExtractor={(r) => r}
-              contentContainerStyle={{ gap: 8 }}
-              renderItem={({ item }) => {
-                const selected = quickRole === item;
-                const label = item === 'all' ? t('matching.roleAll') : t(ROLE_LABEL_KEY[item]);
-                return (
-                  <Pressable
-                    onPress={() => setQuickRole(item)}
-                    style={[styles.roleChip, selected && styles.roleChipSelected]}
-                  >
-                    <Text style={[styles.roleChipText, selected && styles.roleChipTextSelected]}>{label}</Text>
-                  </Pressable>
-                );
-              }}
-            />
+            {isInvestor ? (
+              <View style={styles.investorFilterRow}>
+                <Pressable onPress={() => setShortlistOnly(false)} style={[styles.roleChip, !shortlistOnly && styles.roleChipSelected]}>
+                  <Text style={[styles.roleChipText, !shortlistOnly && styles.roleChipTextSelected]}>{t('investor.allCandidates')}</Text>
+                </Pressable>
+                <Pressable onPress={() => setShortlistOnly(true)} style={[styles.roleChip, shortlistOnly && styles.roleChipSelected]}>
+                  <Text style={[styles.roleChipText, shortlistOnly && styles.roleChipTextSelected]}>{t('investor.shortlistOnly')}</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                data={(isEntrepreneur
+                  ? ['all', 'girisimci', 'kurum', 'yatirimci']
+                  : isCorporate
+                    ? ['all', 'girisimci', 'kurum']
+                    : ['all', ...ROLES]) as (ParticipantRole | 'all')[]}
+                keyExtractor={(r) => r}
+                contentContainerStyle={{ gap: 8 }}
+                renderItem={({ item }) => {
+                  const selected = quickRole === item;
+                  const label = item === 'all' ? t('matching.roleAll') : t(ROLE_LABEL_KEY[item]);
+                  return (
+                    <Pressable
+                      onPress={() => setQuickRole(item)}
+                      style={[styles.roleChip, selected && styles.roleChipSelected]}
+                    >
+                      <Text style={[styles.roleChipText, selected && styles.roleChipTextSelected]}>{label}</Text>
+                    </Pressable>
+                  );
+                }}
+              />
+            )}
+
+            {participantsLoading ? <Text style={styles.flowStatus}>{t('common.loading')}</Text> : null}
+            {participantsError ? <Text style={styles.flowError}>{t(isEntrepreneur ? 'entrepreneur.discoveryLoadError' : isCorporate && isCorporateSchemaMissing(participantsError) ? 'corporate.migrationRequired' : isCorporate ? 'corporate.discoveryLoadError' : 'investor.discoveryLoadError')}</Text> : null}
+            {corporateSchemaUnavailable ? <Text style={styles.flowError}>{t('corporate.migrationRequired')}</Text> : null}
+            {isInvestor && shortlist.isLoading ? <Text style={styles.flowStatus}>{t('investor.shortlistLoading')}</Text> : null}
+            {isInvestor && shortlistErrorMessage ? <Text style={styles.flowError}>{shortlistErrorMessage}</Text> : null}
 
             <View style={{ gap: 12 }}>
               <View style={styles.sectionHeaderRow}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.sectionTitle}>{t('matching.featured')}</Text>
+                  <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.priorityCandidates' : isEntrepreneur ? 'entrepreneur.recommendedMatches' : isCorporate ? 'corporate.recommendedMatches' : 'matching.featured')}</Text>
                   <View style={styles.aiBadge}>
                     <Sparkles size={10} color={colors.primary} />
                     <Text style={styles.aiBadgeText}>AI</Text>
@@ -168,7 +247,7 @@ export default function DiscoverScreen() {
                 <Text style={styles.sectionCount}>{t('matching.matchesCount', { count: featured.length })}</Text>
               </View>
 
-              {featured.length === 0 ? (
+              {featured.length === 0 && !participantsLoading ? (
                 <View style={styles.emptyBox}>
                   <Text style={styles.emptyTitle}>{t('matching.noFeatured')}</Text>
                   <Text style={styles.emptyBody}>{t('matching.noFeaturedBody')}</Text>
@@ -193,7 +272,7 @@ export default function DiscoverScreen() {
                           </View>
                         )}
                         <View style={styles.scoreBadge}>
-                          <Text style={styles.scoreBadgeText}>%{item.score}</Text>
+                          <Text style={styles.scoreBadgeText}>{isInvestor ? `${t('investor.priority')} %${item.score}` : `%${item.score}`}</Text>
                         </View>
                       </View>
                       <View style={styles.featuredBody}>
@@ -204,14 +283,51 @@ export default function DiscoverScreen() {
                             <Text style={styles.sectorChipText}>{item.profile.sector}</Text>
                           </View>
                         ) : null}
+                        {(isInvestor || isCorporate) && item.reasons.length > 0 ? (
+                          <Text style={styles.priorityReason} numberOfLines={2}>{item.reasons[1] ?? item.reasons[0]}</Text>
+                        ) : null}
                       </View>
                       <View style={styles.featuredFooter}>
                         <Pressable onPress={() => setDetailProfile(item.profile)}>
                           <Text style={styles.viewProfileLink}>{t('matching.viewProfile')}</Text>
                         </Pressable>
-                        <Pressable style={styles.matchIconBtn} onPress={() => setWhyMatchProfile(item.profile)}>
-                          <Handshake size={17} color={colors.white} />
-                        </Pressable>
+                        <View style={styles.actionRow}>
+                          {isInvestor ? (
+                            <Pressable
+                              style={styles.shortlistActionBtn}
+                              onPress={() => void toggleShortlist(item.profile.id)}
+                              disabled={shortlist.isMutating || shortlist.isUnavailable}
+                              accessibilityLabel={t(shortlist.profileIds.has(item.profile.id) ? 'investor.removeShortlist' : 'investor.addShortlist')}
+                            >
+                              {shortlist.profileIds.has(item.profile.id)
+                                ? <BookmarkCheck size={17} color={colors.primary} />
+                                : <Bookmark size={17} color={colors.textMuted} />}
+                              <Text style={styles.shortlistActionText} numberOfLines={1}>
+                                {t(shortlist.profileIds.has(item.profile.id) ? 'investor.removeShortlist' : 'investor.addShortlist')}
+                              </Text>
+                            </Pressable>
+                          ) : null}
+                          {isCorporate ? (
+                            <Pressable
+                              style={styles.secondaryIconBtn}
+                              onPress={() => router.push({
+                                pathname: '/(tabs)/opportunities',
+                                params: { targetProfileId: item.profile.id, openKey: String(Date.now()) },
+                              })}
+                              accessibilityLabel={t('corporate.opportunityAdd')}
+                            >
+                              <FolderPlus size={17} color={colors.primary} />
+                            </Pressable>
+                          ) : null}
+                          <Pressable style={styles.matchIconBtn} onPress={() => setWhyMatchProfile(item.profile)}>
+                            <Handshake size={17} color={colors.white} />
+                          </Pressable>
+                          {isInvestor || isEntrepreneur || isCorporate ? (
+                            <Pressable style={styles.secondaryIconBtn} onPress={() => { setScheduleFor(item.profile); setScheduleOpen(true); }} accessibilityLabel={t('matching.requestMeeting')}>
+                              <Calendar size={17} color={colors.primary} />
+                            </Pressable>
+                          ) : null}
+                        </View>
                       </View>
                     </View>
                   )}
@@ -219,47 +335,85 @@ export default function DiscoverScreen() {
               )}
             </View>
 
-            <Text style={styles.sectionTitle}>{t('matching.others')}</Text>
+            <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.otherCandidates' : isEntrepreneur ? 'entrepreneur.otherMatches' : isCorporate ? 'corporate.otherMatches' : 'matching.others')}</Text>
           </View>
         }
         ListEmptyComponent={
           <View style={styles.emptyBox}>
-            <Text style={styles.emptyBody}>{t('matching.noOthers')}</Text>
+            <Text style={styles.emptyBody}>{participantsLoading ? t('common.loading') : isInvestor && shortlistOnly && shortlistErrorMessage ? t('investor.shortlistUnavailable') : isInvestor && shortlistOnly && !shortlist.isLoading ? t('investor.shortlistEmpty') : t('matching.noOthers')}</Text>
           </View>
         }
         renderItem={({ item }) => (
           <Pressable style={styles.participantRow} onPress={() => setDetailProfile(item.profile)}>
-            {item.profile.photo_url ? (
-              <Image source={{ uri: item.profile.photo_url }} style={styles.participantAvatar} />
-            ) : (
-              <View style={[styles.participantAvatar, styles.participantAvatarFallback]}>
-                <Text style={styles.participantAvatarText}>{initialsFor(item.profile.full_name)}</Text>
-              </View>
-            )}
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={styles.participantName} numberOfLines={1}>
-                  {item.profile.full_name}
-                </Text>
-                <View style={styles.smallBadge}>
-                  <Text style={styles.smallBadgeText}>{t('matching.matchScore', { score: item.score })}</Text>
+            <View style={styles.participantTopRow}>
+              {item.profile.photo_url ? (
+                <Image source={{ uri: item.profile.photo_url }} style={styles.participantAvatar} />
+              ) : (
+                <View style={[styles.participantAvatar, styles.participantAvatarFallback]}>
+                  <Text style={styles.participantAvatarText}>{initialsFor(item.profile.full_name)}</Text>
                 </View>
-              </View>
-              <View style={{ flexDirection: 'row', gap: 6, marginTop: 6 }}>
-                {item.profile.sector ? (
-                  <View style={styles.tagNeutral}>
-                    <Text style={styles.tagNeutralText}>{item.profile.sector}</Text>
+              )}
+              <View style={styles.participantInfo}>
+                <View style={styles.participantNameRow}>
+                  <Text style={styles.participantName} numberOfLines={1}>
+                    {item.profile.full_name}
+                  </Text>
+                  <View style={styles.smallBadge}>
+                    <Text style={styles.smallBadgeText}>{t('matching.matchScore', { score: item.score })}</Text>
                   </View>
-                ) : null}
-                <View style={styles.tagPrimary}>
-                  <Text style={styles.tagPrimaryText}>{t(ROLE_LABEL_KEY[item.profile.role])}</Text>
                 </View>
+                <View style={styles.participantTags}>
+                  {item.profile.sector ? (
+                    <View style={styles.tagNeutral}>
+                      <Text style={styles.tagNeutralText} numberOfLines={1}>{item.profile.sector}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.tagPrimary}>
+                    <Text style={styles.tagPrimaryText} numberOfLines={1}>{t(ROLE_LABEL_KEY[item.profile.role])}</Text>
+                  </View>
+                </View>
+                {(isInvestor || isCorporate) && item.reasons.length > 0 ? (
+                  <Text style={styles.priorityReason} numberOfLines={1}>{item.reasons[1] ?? item.reasons[0]}</Text>
+                ) : null}
               </View>
             </View>
-            <Pressable style={styles.rowIconBtn} onPress={() => setWhyMatchProfile(item.profile)}>
-              <Handshake size={16} color={colors.textMuted} />
-            </Pressable>
-            <ChevronRight size={18} color={colors.textFaint} />
+            <View style={styles.participantActions}>
+              <Pressable style={styles.rowActionButton} onPress={(event) => { event.stopPropagation(); setDetailProfile(item.profile); }}>
+                <Text style={styles.rowActionText}>{t('matching.viewProfile')}</Text>
+              </Pressable>
+              {isInvestor ? (
+                <Pressable style={styles.rowShortlistBtn} onPress={(event) => { event.stopPropagation(); void toggleShortlist(item.profile.id); }} disabled={shortlist.isMutating || shortlist.isUnavailable} accessibilityLabel={t(shortlist.profileIds.has(item.profile.id) ? 'investor.removeShortlist' : 'investor.addShortlist')}>
+                  {shortlist.profileIds.has(item.profile.id) ? <BookmarkCheck size={16} color={colors.primary} /> : <Bookmark size={16} color={colors.textMuted} />}
+                  <Text style={styles.rowShortlistText} numberOfLines={1}>
+                    {t(shortlist.profileIds.has(item.profile.id) ? 'investor.removeShortlist' : 'investor.addShortlist')}
+                  </Text>
+                </Pressable>
+              ) : null}
+              {isCorporate ? (
+                <Pressable
+                  style={styles.rowIconBtn}
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    router.push({
+                      pathname: '/(tabs)/opportunities',
+                      params: { targetProfileId: item.profile.id, openKey: String(Date.now()) },
+                    });
+                  }}
+                  accessibilityLabel={t('corporate.opportunityAdd')}
+                >
+                  <FolderPlus size={16} color={colors.primary} />
+                </Pressable>
+              ) : null}
+              <Pressable style={styles.rowIconBtn} onPress={(event) => { event.stopPropagation(); setWhyMatchProfile(item.profile); }} accessibilityLabel={t('matching.whyMatch')}>
+                <Handshake size={16} color={colors.textMuted} />
+              </Pressable>
+              {isInvestor || isEntrepreneur || isCorporate ? (
+                <Pressable style={styles.rowIconBtn} onPress={(event) => { event.stopPropagation(); setScheduleFor(item.profile); setScheduleOpen(true); }} accessibilityLabel={t('matching.requestMeeting')}>
+                  <Calendar size={16} color={colors.primary} />
+                </Pressable>
+              ) : null}
+              <ChevronRight size={18} color={colors.textFaint} />
+            </View>
           </Pressable>
         )}
       />
@@ -270,6 +424,7 @@ export default function DiscoverScreen() {
         initialFilter={filter}
         sectorOptions={sectorOptions}
         interestOptions={interestOptions}
+        roleOptions={allowedRoleOptions}
         onApply={setFilter}
       />
 
@@ -278,19 +433,16 @@ export default function DiscoverScreen() {
         onClose={() => setWhyMatchProfile(null)}
         profile={whyMatchProfile}
         score={whyMatchProfile ? scored.find((s) => s.profile.id === whyMatchProfile.id)?.score ?? 0 : 0}
-        reasons={
-          whyMatchProfile
-            ? localizeMatchReasons(
-                scored.find((s) => s.profile.id === whyMatchProfile.id) ?? { score: 0, reasons: [] },
-                (key, params) => t(key, params),
-              )
-            : []
-        }
+        reasons={whyMatchProfile ? scored.find((s) => s.profile.id === whyMatchProfile.id)?.reasons ?? [] : []}
         isConnected={whyMatchProfile ? connectedIds.has(whyMatchProfile.user_id) : false}
         onConnect={() => whyMatchProfile && toggleConnect(whyMatchProfile.user_id)}
         onRequestMeeting={() => {
-          setScheduleFor(whyMatchProfile);
-          setScheduleOpen(true);
+          const selectedProfile = whyMatchProfile;
+          setWhyMatchProfile(null);
+          setTimeout(() => {
+            setScheduleFor(selectedProfile);
+            setScheduleOpen(true);
+          }, 0);
         }}
       />
 
@@ -306,8 +458,12 @@ export default function DiscoverScreen() {
         }}
         onConnect={() => detailProfile && toggleConnect(detailProfile.user_id)}
         onRequestMeeting={() => {
-          setScheduleFor(detailProfile);
-          setScheduleOpen(true);
+          const selectedProfile = detailProfile;
+          setDetailProfile(null);
+          setTimeout(() => {
+            setScheduleFor(selectedProfile);
+            setScheduleOpen(true);
+          }, 0);
         }}
       />
 
@@ -317,7 +473,7 @@ export default function DiscoverScreen() {
           setScheduleOpen(false);
           setScheduleFor(null);
         }}
-        participants={participants}
+        participants={visibleParticipants}
         preSelectedUserId={scheduleFor?.user_id}
         onCreated={() => queryClient.invalidateQueries({ queryKey: ['meeting_requests'] })}
       />
@@ -325,6 +481,12 @@ export default function DiscoverScreen() {
       <NotificationsModal visible={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
     </View>
   );
+}
+
+export default function DiscoverScreen() {
+  const { data: meResult } = useCurrentProfile();
+  if (meResult?.profile?.role === 'ziyaretci') return <VisitorAgendaScreen />;
+  return <ParticipantDiscoverScreen />;
 }
 
 const styles = StyleSheet.create({
@@ -366,6 +528,9 @@ const styles = StyleSheet.create({
   roleChipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
   roleChipText: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
   roleChipTextSelected: { color: colors.white },
+  investorFilterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  flowStatus: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
+  flowError: { color: colors.danger, backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder, borderWidth: 1, borderRadius: 10, padding: 10, fontSize: 11, lineHeight: 16 },
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sectionTitle: { fontSize: 16, fontWeight: '800', color: colors.text },
   aiBadge: {
@@ -415,6 +580,7 @@ const styles = StyleSheet.create({
   featuredBody: { padding: 12, gap: 6 },
   featuredName: { fontSize: 15, fontWeight: '800', color: colors.text },
   featuredSub: { fontSize: 11, color: colors.textFaint, fontWeight: '600' },
+  priorityReason: { color: colors.textMuted, fontSize: 10, lineHeight: 14, marginTop: 3 },
   sectorChip: {
     alignSelf: 'flex-start',
     backgroundColor: colors.primarySoft,
@@ -424,12 +590,16 @@ const styles = StyleSheet.create({
   },
   sectorChipText: { fontSize: 10, fontWeight: '700', color: colors.primary },
   featuredFooter: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 8,
     paddingHorizontal: 12,
     paddingBottom: 12,
   },
+  actionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6, width: '100%' },
+  secondaryIconBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
+  shortlistActionBtn: { minWidth: 34, maxWidth: 148, height: 34, borderRadius: 17, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
+  shortlistActionText: { flexShrink: 1, fontSize: 10, fontWeight: '800', color: colors.textMuted },
   viewProfileLink: { fontSize: 12, fontWeight: '800', color: colors.primary },
   matchIconBtn: {
     width: 36,
@@ -440,8 +610,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   participantRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 10,
     backgroundColor: colors.white,
     borderRadius: 16,
@@ -450,6 +618,10 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 10,
   },
+  participantTopRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  participantInfo: { flex: 1, minWidth: 0, gap: 4 },
+  participantNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+  participantTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   participantAvatar: { width: 46, height: 46, borderRadius: 23 },
   participantAvatarFallback: {
     backgroundColor: colors.secondaryContainer,
@@ -471,5 +643,18 @@ const styles = StyleSheet.create({
   tagNeutralText: { fontSize: 10, fontWeight: '600', color: colors.textMuted },
   tagPrimary: { backgroundColor: colors.primarySoft, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
   tagPrimaryText: { fontSize: 10, fontWeight: '700', color: colors.primary },
+  participantActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 8,
+  },
+  rowActionButton: { marginRight: 'auto', paddingVertical: 6, paddingHorizontal: 2 },
+  rowActionText: { fontSize: 12, fontWeight: '800', color: colors.primary },
   rowIconBtn: { padding: 6 },
+  rowShortlistBtn: { minHeight: 30, maxWidth: 132, borderRadius: 15, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
+  rowShortlistText: { flexShrink: 1, fontSize: 10, fontWeight: '800', color: colors.textMuted },
 });

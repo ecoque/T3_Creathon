@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Check, Clock, FileText, MapPin, Plus, X } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { Calendar, Check, Clock, FileText, FolderPlus, MapPin, Plus, X } from 'lucide-react-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -9,10 +10,11 @@ import { MeetingNoteModal } from '../../components/modals/MeetingNoteModal';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { ScheduleMeetingModal } from '../../components/modals/ScheduleMeetingModal';
 import { colors } from '../../constants/theme';
+import { isInvestorSchemaMissing } from '../../features/investor/schema';
 import { supabase } from '../../lib/supabase';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
-import { useMeetingNotes } from '../../lib/useMeetingNotes';
 import { useMeetingRequests, type MeetingRequestItem } from '../../lib/useMeetingRequests';
+import { useMeetingNotes } from '../../lib/useMeetingNotes';
 import type { MeetingStatus, Profile } from '../../types';
 
 async function fetchAllProfiles(myUserId: string): Promise<Profile[]> {
@@ -47,29 +49,46 @@ export default function MeetingsScreen() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: meResult } = useCurrentProfile();
-  const { data } = useMeetingRequests();
+  const canCreateMeeting = !!meResult?.profile && meResult.profile.role !== 'ziyaretci';
+  const { data } = useMeetingRequests({ enabled: canCreateMeeting });
   const items = data?.items ?? [];
+  const meetingNotes = useMeetingNotes(data?.userId);
 
   const { data: allParticipants = [] } = useQuery({
     queryKey: ['profiles', 'others', meResult?.userId],
     queryFn: () => fetchAllProfiles(meResult!.userId),
-    enabled: !!meResult?.userId,
+    enabled: !!meResult?.userId && canCreateMeeting,
   });
+  const activeParticipants = allParticipants.filter((profile) => profile.status === 'active');
+  const meetingCandidates = meResult?.profile?.role === 'girisimci'
+    ? activeParticipants.filter((profile) => ['girisimci', 'kurum', 'yatirimci'].includes(profile.role))
+    : activeParticipants;
 
   const [tab, setTab] = useState<'incoming' | 'outgoing'>('incoming');
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [noteTarget, setNoteTarget] = useState<MeetingRequestItem | null>(null);
-  const notes = useMeetingNotes(meResult?.userId);
+  const [noteFor, setNoteFor] = useState<MeetingRequestItem | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const incoming = items.filter((m) => m.direction === 'incoming');
   const outgoing = items.filter((m) => m.direction === 'outgoing');
   const currentList = tab === 'incoming' ? incoming : outgoing;
 
   async function updateStatus(id: string, status: 'accepted' | 'rejected') {
-    await supabase.from('meeting_requests').update({ status }).eq('id', id);
-    queryClient.invalidateQueries({ queryKey: ['meeting_requests'] });
+    setActionError(null);
+    const { error } = await supabase.from('meeting_requests').update({ status }).eq('id', id);
+    if (error) {
+      setActionError(error.message);
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: ['meeting_requests'] });
   }
+
+  const noteErrorMessage = meetingNotes.queryError
+    ? isInvestorSchemaMissing(meetingNotes.queryError)
+      ? t('entrepreneur.migrationRequired')
+      : t('entrepreneur.noteLoadError')
+    : null;
 
   function formatProposedTime(iso?: string | null) {
     if (!iso) return '';
@@ -96,10 +115,12 @@ export default function MeetingsScreen() {
                 <Text style={styles.title}>{t('meetings.title')}</Text>
                 <Text style={styles.subtitle}>{t('meetings.subtitle')}</Text>
               </View>
-              <Pressable style={styles.newRequestBtn} onPress={() => setScheduleOpen(true)}>
-                <Plus size={15} color={colors.white} />
-                <Text style={styles.newRequestBtnText}>{t('meetings.newRequest')}</Text>
-              </Pressable>
+              {canCreateMeeting ? (
+                <Pressable style={styles.newRequestBtn} onPress={() => setScheduleOpen(true)}>
+                  <Plus size={15} color={colors.white} />
+                  <Text style={styles.newRequestBtnText}>{t('meetings.newRequest')}</Text>
+                </Pressable>
+              ) : null}
             </View>
 
             <View style={styles.segmentRow}>
@@ -120,6 +141,15 @@ export default function MeetingsScreen() {
                 </Text>
               </Pressable>
             </View>
+            {actionError ? <Text style={styles.flowError}>{actionError}</Text> : null}
+            {noteErrorMessage ? (
+              <View style={styles.flowErrorBox}>
+                <Text style={styles.flowErrorText}>{noteErrorMessage}</Text>
+                <Pressable style={styles.retryButton} onPress={() => void meetingNotes.refetch()}>
+                  <Text style={styles.retryButtonText}>{t('entrepreneur.retryNotes')}</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         }
         ListEmptyComponent={
@@ -176,19 +206,42 @@ export default function MeetingsScreen() {
             ) : null}
 
             {item.status === 'accepted' ? (
-              <View style={styles.acceptedRow}>
-                <Check size={13} color={colors.success} />
-                <Text style={styles.acceptedText}>{t('meetings.acceptedNote')}</Text>
+              <View style={styles.acceptedSection}>
+                <View style={styles.acceptedRow}>
+                  <Check size={13} color={colors.success} />
+                  <Text style={styles.acceptedText}>{t('meetings.acceptedNote')}</Text>
+                </View>
+                {meetingNotes.byMeetingId.get(item.id)?.note ? (
+                  <Text style={styles.notePreview} numberOfLines={2}>{meetingNotes.byMeetingId.get(item.id)?.note}</Text>
+                ) : null}
                 <Pressable
-                  style={styles.noteBtn}
-                  onPress={() => setNoteTarget(item)}
-                  hitSlop={8}
+                  style={styles.noteButton}
+                  onPress={() => setNoteFor(item)}
+                  disabled={meetingNotes.isLoading || !!noteErrorMessage}
                 >
-                  <FileText size={13} color={colors.primary} />
-                  <Text style={styles.noteBtnText}>
-                    {notes.byMeetingId.has(item.id) ? t('entrepreneur.editNote') : t('entrepreneur.addNote')}
+                  <FileText size={14} color={colors.primary} />
+                  <Text style={styles.noteButtonText}>
+                    {t(meetingNotes.byMeetingId.has(item.id) ? 'entrepreneur.editNote' : 'entrepreneur.addNote')}
                   </Text>
                 </Pressable>
+                {meResult?.profile?.role === 'kurum'
+                  && item.otherProfile?.status === 'active'
+                  && ['girisimci', 'kurum'].includes(item.otherProfile.role) ? (
+                    <Pressable
+                      style={styles.opportunityButton}
+                      onPress={() => router.push({
+                        pathname: '/(tabs)/opportunities',
+                        params: {
+                          targetProfileId: item.otherProfile!.id,
+                          meetingRequestId: item.id,
+                          openKey: String(Date.now()),
+                        },
+                      })}
+                    >
+                      <FolderPlus size={14} color={colors.secondaryDark} />
+                      <Text style={styles.opportunityButtonText}>{t('corporate.opportunityFromMeeting')}</Text>
+                    </Pressable>
+                  ) : null}
               </View>
             ) : null}
           </View>
@@ -198,23 +251,20 @@ export default function MeetingsScreen() {
       <ScheduleMeetingModal
         visible={scheduleOpen}
         onClose={() => setScheduleOpen(false)}
-        participants={allParticipants}
+        participants={meetingCandidates}
         onCreated={() => queryClient.invalidateQueries({ queryKey: ['meeting_requests'] })}
       />
 
-      <NotificationsModal visible={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
-
       <MeetingNoteModal
-        visible={noteTarget !== null}
-        participantName={noteTarget?.otherProfile?.full_name ?? ''}
-        initialNote={noteTarget ? notes.byMeetingId.get(noteTarget.id)?.note ?? '' : ''}
-        saving={notes.isSaving}
-        onClose={() => setNoteTarget(null)}
-        onSave={async (note) => {
-          if (!noteTarget) return;
-          await notes.save({ meetingRequestId: noteTarget.id, note });
-        }}
+        visible={!!noteFor}
+        participantName={noteFor?.otherProfile?.full_name ?? ''}
+        initialNote={noteFor ? meetingNotes.byMeetingId.get(noteFor.id)?.note : ''}
+        saving={meetingNotes.isSaving}
+        onClose={() => setNoteFor(null)}
+        onSave={(note) => meetingNotes.save({ meetingRequestId: noteFor!.id, note })}
       />
+
+      <NotificationsModal visible={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
     </View>
   );
 }
@@ -323,16 +373,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.background,
   },
   acceptedText: { fontSize: 12, fontWeight: '700', color: colors.success },
-  noteBtn: {
-    marginLeft: 'auto',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  noteBtnText: { fontSize: 11, fontWeight: '700', color: colors.primary },
+  acceptedSection: { gap: 9, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.background },
+  notePreview: { color: colors.textMuted, fontSize: 12, lineHeight: 17, backgroundColor: colors.background, borderRadius: 10, padding: 10 },
+  noteButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 11, borderWidth: 1, borderColor: colors.primaryLight, backgroundColor: colors.primarySoft, paddingVertical: 10 },
+  noteButtonText: { color: colors.primary, fontSize: 12, fontWeight: '800' },
+  opportunityButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 11, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background, paddingVertical: 10 },
+  opportunityButtonText: { color: colors.secondaryDark, fontSize: 12, fontWeight: '800' },
+  flowError: { color: colors.danger, backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder, borderWidth: 1, borderRadius: 10, padding: 10, fontSize: 11, lineHeight: 16 },
+  flowErrorBox: { gap: 8, backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder, borderWidth: 1, borderRadius: 10, padding: 10 },
+  flowErrorText: { color: colors.danger, fontSize: 11, lineHeight: 16 },
+  retryButton: { alignSelf: 'flex-start', borderRadius: 8, borderWidth: 1, borderColor: colors.dangerBorder, backgroundColor: colors.white, paddingHorizontal: 10, paddingVertical: 6 },
+  retryButtonText: { color: colors.danger, fontSize: 11, fontWeight: '800' },
 });

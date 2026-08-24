@@ -19,6 +19,7 @@ type FilterModalProps = {
   initialFilter: FilterOptions;
   sectorOptions: string[];
   interestOptions: string[];
+  roleOptions?: ParticipantRole[];
   onApply: (filter: FilterOptions) => void;
 };
 
@@ -28,6 +29,7 @@ export function FilterModal({
   initialFilter,
   sectorOptions,
   interestOptions,
+  roleOptions = ROLES,
   onApply,
 }: FilterModalProps) {
   const { t } = useTranslation();
@@ -67,7 +69,7 @@ export function FilterModal({
             <View style={{ gap: 10 }}>
               <Text style={styles.sectionLabel}>{t('modals.filterRole')}</Text>
               <View style={styles.chipRow}>
-                {ROLES.map((role) => {
+                {roleOptions.map((role) => {
                   const selected = roles.includes(role);
                   return (
                     <Pressable
