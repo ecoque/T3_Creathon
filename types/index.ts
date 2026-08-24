@@ -2,6 +2,16 @@ export type ParticipantRole = 'girisimci' | 'yatirimci' | 'kurum' | 'ziyaretci';
 
 export type MeetingStatus = 'pending' | 'accepted' | 'rejected';
 
+export type CorporateOpportunityStage =
+  | 'identified'
+  | 'contacted'
+  | 'meeting_scheduled'
+  | 'meeting_completed'
+  | 'evaluation'
+  | 'pilot'
+  | 'won'
+  | 'closed';
+
 // is_admin, katılımcı rolünden (ParticipantRole) tamamen ayrı bir yetki bayrağıdır;
 // stant pin yönetimi gibi sahne arkası aksiyonlar için kullanılır.
 export interface User {
@@ -21,6 +31,8 @@ export interface Profile {
   company?: string;
   investment_thesis?: string | null;
   investment_focuses?: string[];
+  technology_need_summary?: string | null;
+  technology_need_areas?: string[];
   role: ParticipantRole;
   sector: string;
   interests: string[];
@@ -55,6 +67,30 @@ export interface MeetingNote {
   note: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface CorporateOpportunity {
+  id: string;
+  owner_user_id: string;
+  target_profile_id: string;
+  meeting_request_id?: string | null;
+  title: string;
+  stage: CorporateOpportunityStage;
+  next_action?: string | null;
+  next_action_at?: string | null;
+  private_notes?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CorporateOpportunityStageHistory {
+  id: string;
+  opportunity_id: string;
+  owner_user_id: string;
+  from_stage?: CorporateOpportunityStage | null;
+  to_stage: CorporateOpportunityStage;
+  changed_by_user_id?: string | null;
+  changed_at: string;
 }
 
 export interface Badge {

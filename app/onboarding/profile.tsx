@@ -7,6 +7,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '../../constants/theme';
+import { isCorporateSchemaMissing } from '../../features/corporate/schema';
 import { isInvestorSchemaMissing } from '../../features/investor/schema';
 import { useOnboardingStore } from '../../lib/onboardingStore';
 import { supabase } from '../../lib/supabase';
@@ -35,6 +36,8 @@ const ROLE_CONTENT: Record<ParticipantRole, { sectors: string[]; interests: stri
   },
 };
 
+const CORPORATE_NEED_AREAS = ['Yapay Zeka', 'Veri & Analitik', 'SaaS', 'Siber Güvenlik', 'Sürdürülebilirlik', 'Fintech', 'Donanım & IoT', 'Müşteri Deneyimi'];
+
 function toggleItem(items: string[], item: string, limit: number): string[] {
   if (items.includes(item)) return items.filter((value) => value !== item);
   return items.length >= limit ? items : [...items, item];
@@ -51,6 +54,8 @@ export default function OnboardingProfileScreen() {
   const [sector, setSector] = useState('');
   const [investmentFocuses, setInvestmentFocuses] = useState<string[]>([]);
   const [investmentThesis, setInvestmentThesis] = useState('');
+  const [technologyNeedSummary, setTechnologyNeedSummary] = useState('');
+  const [technologyNeedAreas, setTechnologyNeedAreas] = useState<string[]>([]);
   const [interests, setInterests] = useState<string[]>([]);
   const [goals, setGoals] = useState<string[]>([]);
   const [otherSector, setOtherSector] = useState('');
@@ -58,6 +63,8 @@ export default function OnboardingProfileScreen() {
   const [error, setError] = useState<string | null>(null);
   const [investorSchemaReady, setInvestorSchemaReady] = useState<boolean | null>(role === 'yatirimci' ? null : true);
   const [investorSchemaIssue, setInvestorSchemaIssue] = useState<'missing' | 'unavailable' | null>(null);
+  const [corporateSchemaReady, setCorporateSchemaReady] = useState<boolean | null>(role === 'kurum' ? null : true);
+  const [corporateSchemaIssue, setCorporateSchemaIssue] = useState<'missing' | 'unavailable' | null>(null);
 
   useEffect(() => {
     if (!role) router.replace('/onboarding');
@@ -98,6 +105,29 @@ export default function OnboardingProfileScreen() {
     return () => { active = false; };
   }, [role, t]);
 
+  useEffect(() => {
+    let active = true;
+    if (role !== 'kurum') {
+      setCorporateSchemaReady(true);
+      setCorporateSchemaIssue(null);
+      return () => { active = false; };
+    }
+    setCorporateSchemaReady(null);
+    void supabase.from('profiles').select('technology_need_summary,technology_need_areas').limit(0).then(({ error: schemaError }) => {
+      if (!active) return;
+      if (!schemaError) {
+        setCorporateSchemaReady(true);
+        setCorporateSchemaIssue(null);
+        return;
+      }
+      setCorporateSchemaReady(false);
+      const issue = isCorporateSchemaMissing(schemaError) ? 'missing' : 'unavailable';
+      setCorporateSchemaIssue(issue);
+      setError(t(issue === 'missing' ? 'corporate.migrationRequired' : 'corporate.schemaCheckFailed'));
+    });
+    return () => { active = false; };
+  }, [role, t]);
+
   async function handleSubmit() {
     const selectedSector = sector === 'Diğer' ? otherSector.trim() : sector;
     if (!role) {
@@ -111,8 +141,13 @@ export default function OnboardingProfileScreen() {
       || goals.length < 1
       || (role === 'girisimci' && (!title.trim() || !company.trim()))
       || (role === 'yatirimci' && !investmentThesis.trim())
+      || (role === 'kurum' && (!title.trim() || !company.trim() || technologyNeedSummary.trim().length < 20 || technologyNeedAreas.length < 1))
     ) {
-      setError(t(role === 'yatirimci' ? 'investor.onboardingValidation' : role === 'girisimci' ? 'entrepreneur.onboardingValidation' : 'onboarding.profileValidation'));
+      setError(t(role === 'yatirimci' ? 'investor.onboardingValidation' : role === 'girisimci' ? 'entrepreneur.onboardingValidation' : role === 'kurum' ? 'corporate.onboardingValidation' : 'onboarding.profileValidation'));
+      return;
+    }
+    if (role === 'kurum' && corporateSchemaReady !== true) {
+      setError(t(corporateSchemaIssue === 'missing' ? 'corporate.migrationRequired' : corporateSchemaIssue === 'unavailable' ? 'corporate.schemaCheckFailed' : 'corporate.onboardingValidation'));
       return;
     }
     if (role === 'yatirimci' && (investmentFocuses.length < 1 || investorSchemaReady !== true)) {
@@ -148,14 +183,19 @@ export default function OnboardingProfileScreen() {
               investment_focuses: investmentFocuses,
               investment_thesis: investmentThesis.trim(),
             }
-          : {}),
+          : role === 'kurum'
+            ? {
+                technology_need_summary: technologyNeedSummary.trim(),
+                technology_need_areas: technologyNeedAreas,
+              }
+            : {}),
       };
 
     let { error: saveError } = await supabase.from('profiles').upsert(
       profilePayload,
       { onConflict: 'user_id' },
     );
-    if (saveError && !['yatirimci', 'girisimci'].includes(role) && isInvestorSchemaMissing(saveError)) {
+    if (saveError && !['yatirimci', 'girisimci', 'kurum'].includes(role) && isInvestorSchemaMissing(saveError)) {
       const legacyResult = await supabase.from('profiles').upsert(
         {
           user_id: user.id,
@@ -171,7 +211,7 @@ export default function OnboardingProfileScreen() {
     }
     setLoading(false);
     if (saveError) {
-      setError(isInvestorSchemaMissing(saveError) ? t(role === 'girisimci' ? 'entrepreneur.migrationRequired' : 'investor.migrationRequired') : saveError.message);
+      setError(isCorporateSchemaMissing(saveError) ? t('corporate.migrationRequired') : isInvestorSchemaMissing(saveError) ? t(role === 'girisimci' ? 'entrepreneur.migrationRequired' : 'investor.migrationRequired') : saveError.message);
       return;
     }
 
@@ -195,16 +235,16 @@ export default function OnboardingProfileScreen() {
           <View style={styles.stepRow}><View style={styles.stepDone} /><View style={styles.stepActive} /></View>
         </View>
         <Text style={styles.eyebrow}>{t('onboarding.lastStep')}</Text>
-        <Text style={styles.title}>{t(role === 'yatirimci' ? 'investor.onboardingTitle' : role === 'girisimci' ? 'entrepreneur.onboardingTitle' : 'onboarding.profileTitle')}</Text>
-        <Text style={styles.subtitle}>{t(role === 'yatirimci' ? 'investor.onboardingSubtitle' : role === 'girisimci' ? 'entrepreneur.onboardingSubtitle' : 'onboarding.profileSubtitle')}</Text>
+        <Text style={styles.title}>{t(role === 'yatirimci' ? 'investor.onboardingTitle' : role === 'girisimci' ? 'entrepreneur.onboardingTitle' : role === 'kurum' ? 'corporate.onboardingTitle' : 'onboarding.profileTitle')}</Text>
+        <Text style={styles.subtitle}>{t(role === 'yatirimci' ? 'investor.onboardingSubtitle' : role === 'girisimci' ? 'entrepreneur.onboardingSubtitle' : role === 'kurum' ? 'corporate.onboardingSubtitle' : 'onboarding.profileSubtitle')}</Text>
 
         <View style={styles.card}>
           <Text style={styles.label}>{t('onboarding.fullNameLabel')}</Text>
           <TextInput style={styles.input} placeholder={t('onboarding.fullNamePlaceholder')} placeholderTextColor={colors.textFaint} value={fullName} onChangeText={setFullName} autoComplete="name" textContentType="name" />
-          <Text style={styles.label}>{t(role === 'yatirimci' ? 'investor.titleLabel' : role === 'girisimci' ? 'entrepreneur.titleLabel' : 'onboarding.titleLabel')}</Text>
-          <TextInput style={styles.input} placeholder={t(role === 'yatirimci' ? 'investor.titlePlaceholder' : role === 'girisimci' ? 'entrepreneur.titlePlaceholder' : 'onboarding.titlePlaceholder')} placeholderTextColor={colors.textFaint} value={title} onChangeText={setTitle} />
-          <Text style={styles.label}>{role === 'girisimci' ? t('entrepreneur.companyLabel') : role === 'yatirimci' ? t('investor.fundLabel') : t('onboarding.companyLabel')}</Text>
-          <TextInput style={styles.input} placeholder={role === 'girisimci' ? t('entrepreneur.companyPlaceholder') : role === 'yatirimci' ? t('investor.fundPlaceholder') : t('onboarding.companyPlaceholder')} placeholderTextColor={colors.textFaint} value={company} onChangeText={setCompany} autoComplete="organization" textContentType="organizationName" />
+          <Text style={styles.label}>{t(role === 'yatirimci' ? 'investor.titleLabel' : role === 'girisimci' ? 'entrepreneur.titleLabel' : role === 'kurum' ? 'corporate.titleLabel' : 'onboarding.titleLabel')}</Text>
+          <TextInput style={styles.input} placeholder={t(role === 'yatirimci' ? 'investor.titlePlaceholder' : role === 'girisimci' ? 'entrepreneur.titlePlaceholder' : role === 'kurum' ? 'corporate.titlePlaceholder' : 'onboarding.titlePlaceholder')} placeholderTextColor={colors.textFaint} value={title} onChangeText={setTitle} />
+          <Text style={styles.label}>{role === 'girisimci' ? t('entrepreneur.companyLabel') : role === 'yatirimci' ? t('investor.fundLabel') : role === 'kurum' ? t('corporate.companyLabel') : t('onboarding.companyLabel')}</Text>
+          <TextInput style={styles.input} placeholder={role === 'girisimci' ? t('entrepreneur.companyPlaceholder') : role === 'yatirimci' ? t('investor.fundPlaceholder') : role === 'kurum' ? t('corporate.companyPlaceholder') : t('onboarding.companyPlaceholder')} placeholderTextColor={colors.textFaint} value={company} onChangeText={setCompany} autoComplete="organization" textContentType="organizationName" />
         </View>
 
         <View style={styles.card}>
@@ -230,6 +270,19 @@ export default function OnboardingProfileScreen() {
                 />
               ))}
             </View>
+          </View>
+        ) : null}
+
+        {role === 'kurum' ? (
+          <View style={styles.card}>
+            <Text style={styles.label}>{t('corporate.needAreasLabel')}</Text>
+            <Text style={styles.hint}>{t('corporate.needAreasHint', { count: technologyNeedAreas.length })}</Text>
+            <View style={styles.chipRow}>
+              {CORPORATE_NEED_AREAS.map((item) => <ChoiceChip key={item} label={item} selected={technologyNeedAreas.includes(item)} onPress={() => setTechnologyNeedAreas((current) => toggleItem(current, item, 5))} />)}
+            </View>
+            <Text style={styles.label}>{t('corporate.needSummaryLabel')}</Text>
+            <Text style={styles.hint}>{t('corporate.needSummaryHint', { count: technologyNeedSummary.length })}</Text>
+            <TextInput style={[styles.input, styles.textArea]} placeholder={t('corporate.needSummaryPlaceholder')} placeholderTextColor={colors.textFaint} value={technologyNeedSummary} onChangeText={(value) => setTechnologyNeedSummary(value.slice(0, 500))} multiline maxLength={500} textAlignVertical="top" />
           </View>
         ) : null}
 
@@ -267,8 +320,8 @@ export default function OnboardingProfileScreen() {
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        <Pressable style={[styles.button, (loading || investorSchemaReady === null) && styles.buttonDisabled]} onPress={handleSubmit} disabled={loading || investorSchemaReady === null}>
-          {loading || investorSchemaReady === null ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>{t('onboarding.discoverEvent')}</Text>}
+        <Pressable style={[styles.button, (loading || investorSchemaReady === null || corporateSchemaReady === null) && styles.buttonDisabled]} onPress={handleSubmit} disabled={loading || investorSchemaReady === null || corporateSchemaReady === null}>
+          {loading || investorSchemaReady === null || corporateSchemaReady === null ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>{t('onboarding.discoverEvent')}</Text>}
         </Pressable>
       </ScrollView>
     </SafeAreaView>

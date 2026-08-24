@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Check, Clock, FileText, MapPin, Plus, X } from 'lucide-react-native';
+import { router } from 'expo-router';
+import { Calendar, Check, Clock, FileText, FolderPlus, MapPin, Plus, X } from 'lucide-react-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -220,6 +221,24 @@ export default function MeetingsScreen() {
                     {t(meetingNotes.byMeetingId.has(item.id) ? 'entrepreneur.editNote' : 'entrepreneur.addNote')}
                   </Text>
                 </Pressable>
+                {meResult?.profile?.role === 'kurum'
+                  && item.otherProfile?.status === 'active'
+                  && ['girisimci', 'kurum'].includes(item.otherProfile.role) ? (
+                    <Pressable
+                      style={styles.opportunityButton}
+                      onPress={() => router.push({
+                        pathname: '/(tabs)/opportunities',
+                        params: {
+                          targetProfileId: item.otherProfile!.id,
+                          meetingRequestId: item.id,
+                          openKey: String(Date.now()),
+                        },
+                      })}
+                    >
+                      <FolderPlus size={14} color={colors.secondaryDark} />
+                      <Text style={styles.opportunityButtonText}>{t('corporate.opportunityFromMeeting')}</Text>
+                    </Pressable>
+                  ) : null}
               </View>
             ) : null}
           </View>
@@ -357,6 +376,8 @@ const styles = StyleSheet.create({
   notePreview: { color: colors.textMuted, fontSize: 12, lineHeight: 17, backgroundColor: colors.background, borderRadius: 10, padding: 10 },
   noteButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 11, borderWidth: 1, borderColor: colors.primaryLight, backgroundColor: colors.primarySoft, paddingVertical: 10 },
   noteButtonText: { color: colors.primary, fontSize: 12, fontWeight: '800' },
+  opportunityButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 11, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: colors.background, paddingVertical: 10 },
+  opportunityButtonText: { color: colors.secondaryDark, fontSize: 12, fontWeight: '800' },
   flowError: { color: colors.danger, backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder, borderWidth: 1, borderRadius: 10, padding: 10, fontSize: 11, lineHeight: 16 },
   flowErrorBox: { gap: 8, backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder, borderWidth: 1, borderRadius: 10, padding: 10 },
   flowErrorText: { color: colors.danger, fontSize: 11, lineHeight: 16 },

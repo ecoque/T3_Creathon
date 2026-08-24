@@ -62,13 +62,22 @@ Migration dosyalarını Supabase Dashboard > SQL Editor içinde aşağıdaki sı
    Yeniden çalıştırılabilir.
 5. `supabase_entrepreneur_core_flow_migration.sql` — girişimci kimliği, özel görüşme notları,
    hesapla senkron ajanda ve çakışmasız toplantı uygunluğunu ekler. Ortak güvenlik yardımcı
-   fonksiyonlarının güncel sürümünü içerdiği için **en son çalıştırılmalıdır** ve yeniden
-   çalıştırılabilir. Bundan sonra yatırımcı migration'ını tek başına yeniden çalıştırmayın.
+   fonksiyonlarının güncel sürümünü içerir ve yeniden çalıştırılabilir. Yatırımcı migration'ından
+   sonra çalıştırılmalıdır.
+6. `supabase_corporate_core_flow_migration.sql` — kurumun teknoloji ihtiyacını, özel fırsat
+   takibini, aşama geçmişini ve toplantı–fırsat bütünlüğünü RLS ile ekler. Rol yükseltme ve
+   silinemez fırsat geçmişi korumalarının güncel sürümünü içerdiği için **en son
+   çalıştırılmalıdır** ve yeniden çalıştırılabilir. Bundan sonra önceki rol migration'larını
+   tek başına yeniden çalıştırmayın. Eski bir taslaktan aynı kurum–hedef çifti için birden
+   fazla fırsat kaldıysa migration hiçbir satırı otomatik silmez; mükerrerleri manuel
+   uzlaştırmanızı isteyen açık bir hata verip transaction'ı geri alır.
 
 Daha önce yatırımcı ve girişimci migration'larını çalıştırmış bir projeye yeni yatırım tezi
 zorunluluğunu eklerken önce güncel `supabase_investor_core_flow_migration.sql`, hemen ardından
 `supabase_entrepreneur_core_flow_migration.sql` dosyasını yeniden çalıştırın. Böylece yatırımcı
 kısıtı eklenirken ortak yardımcı fonksiyonların en güncel sürümü yine en son uygulanmış olur.
+Kurum akışı kurulmuş projelerde bu ikisinin hemen ardından güncel
+`supabase_corporate_core_flow_migration.sql` dosyasını da çalıştırın.
 
 `supabase_location_pings_delete_migration.sql`, kullanıcıya yalnız kendi konum kayıtlarını
 silme izni veren bağımsız ve tek seferlik bir migration'dır. Politika zaten varsa yeniden

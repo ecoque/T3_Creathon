@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   MapPin,
+  FolderKanban,
   Search,
   Sparkles,
   Users,
@@ -26,6 +27,7 @@ import { venuePoints } from '../../constants/venuePoints';
 import { rankSessionsForProfile } from '../../features/agenda/sessionRecommendations';
 import { localizeMatchReasons, rankMatches } from '../../features/matching/scoring';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
+import { useCorporateOpportunities } from '../../lib/useCorporateOpportunities';
 import { useMeetingRequests } from '../../lib/useMeetingRequests';
 import type { MeetingRequestItem } from '../../lib/useMeetingRequests';
 import { useOtherProfiles } from '../../lib/useOtherProfiles';
@@ -115,6 +117,8 @@ export default function HomeScreen() {
   const dateLocale = i18n.language?.toLowerCase().startsWith('en') ? 'en-US' : 'tr-TR';
   const { data: meResult } = useCurrentProfile();
   const myProfile = meResult?.profile ?? null;
+  const isCorporate = myProfile?.role === 'kurum';
+  const corporateOpportunities = useCorporateOpportunities(meResult?.userId, isCorporate);
   const { data: sessions = [] } = useQuery({ queryKey: ['sessions'], queryFn: fetchSessions });
   const { data: meetingResult } = useMeetingRequests();
   const meetingItems = useMemo(() => meetingResult?.items ?? [], [meetingResult?.items]);
@@ -368,6 +372,12 @@ export default function HomeScreen() {
   const pendingIncomingCount = meetingItems.filter(
     (meeting) => meeting.direction === 'incoming' && meeting.status === 'pending',
   ).length;
+  const activeCorporateOpportunities = corporateOpportunities.items.filter(
+    (opportunity) => !['won', 'closed'].includes(opportunity.stage),
+  );
+  const nextCorporateAction = activeCorporateOpportunities
+    .filter((opportunity) => opportunity.next_action && opportunity.next_action_at)
+    .sort((a, b) => new Date(a.next_action_at!).getTime() - new Date(b.next_action_at!).getTime())[0];
 
   return (
     <View style={styles.screen}>
@@ -410,6 +420,39 @@ export default function HomeScreen() {
                 </Text>
               </Pressable>
             </View>
+            {isCorporate ? (
+              <Pressable
+                style={styles.corporateActionCard}
+                onPress={() => router.push('/(tabs)/opportunities')}
+              >
+                <View style={styles.corporateActionIcon}>
+                  <FolderKanban size={19} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={styles.corporateActionTitle}>{t('corporate.homeOpportunityTitle')}</Text>
+                  {corporateOpportunities.queryError ? (
+                    <Text style={styles.corporateActionError}>{t('corporate.homeOpportunityLoadError')}</Text>
+                  ) : nextCorporateAction ? (
+                    <>
+                      <Text style={styles.corporateActionText} numberOfLines={1}>{nextCorporateAction.next_action}</Text>
+                      <Text style={styles.corporateActionMeta}>
+                        {t('corporate.homeOpportunityNextAction', {
+                          name: nextCorporateAction.targetProfile?.full_name ?? '',
+                          date: new Date(nextCorporateAction.next_action_at!).toLocaleString(dateLocale, {
+                            day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+                          }),
+                        })}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.corporateActionText}>
+                      {t('corporate.homeOpportunitySummary', { count: activeCorporateOpportunities.length })}
+                    </Text>
+                  )}
+                </View>
+                <ChevronRight size={18} color={colors.primary} />
+              </Pressable>
+            ) : null}
             {bookmarkQuery.error || toggleBookmarkMutation.error ? (
               <Text style={styles.bookmarkSyncError}>{t('home.bookmarkSyncError')}</Text>
             ) : null}
@@ -881,6 +924,28 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 7,
   },
+  corporateActionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+    backgroundColor: colors.white,
+    padding: 13,
+  },
+  corporateActionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primarySoft,
+  },
+  corporateActionTitle: { color: colors.text, fontSize: 13, fontWeight: '800' },
+  corporateActionText: { color: colors.textMuted, fontSize: 11, lineHeight: 15 },
+  corporateActionMeta: { color: colors.textFaint, fontSize: 9, lineHeight: 13 },
+  corporateActionError: { color: colors.danger, fontSize: 10, lineHeight: 14 },
   smartAgendaTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   smartAgendaTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
   smartAgendaHint: { color: colors.textMuted, fontSize: 11, lineHeight: 16 },

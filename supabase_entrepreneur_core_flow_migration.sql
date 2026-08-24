@@ -12,8 +12,10 @@ alter table public.profiles
   add column if not exists status text not null default 'active';
 
 -- Base profiles_update_self must not let a participant reactivate a profile
--- disabled by an administrator. Reuse the shared function/trigger names so
--- admin, investor, and entrepreneur migrations remain apply-order compatible.
+-- disabled by an administrator or self-promote into another account class.
+-- Reuse the shared function/trigger names so admin, investor, entrepreneur,
+-- and corporate migrations remain apply-order compatible. Onboarding INSERT
+-- is not affected.
 create or replace function public.protect_admin_profile_fields()
 returns trigger
 language plpgsql
@@ -23,27 +25,20 @@ begin
   if auth.uid() is not null
     and auth.role() <> 'service_role'
     and not public.is_admin()
-    and new.status is distinct from old.status then
+    and (
+      new.status is distinct from old.status
+      or new.role is distinct from old.role
+    ) then
     raise exception 'Admin-managed profile fields cannot be changed by this user.';
   end if;
   return new;
 end;
 $$;
 
-do $$
-begin
-  if not exists (
-    select 1 from pg_trigger
-    where tgname = 'protect_admin_profile_fields'
-      and tgrelid = 'public.profiles'::regclass
-      and not tgisinternal
-  ) then
-    create trigger protect_admin_profile_fields
-      before update on public.profiles
-      for each row execute function public.protect_admin_profile_fields();
-  end if;
-end
-$$;
+drop trigger if exists protect_admin_profile_fields on public.profiles;
+create trigger protect_admin_profile_fields
+  before update on public.profiles
+  for each row execute function public.protect_admin_profile_fields();
 
 -- Existing incomplete founder profiles are left untouched during deployment,
 -- while every new or updated founder profile must provide the professional

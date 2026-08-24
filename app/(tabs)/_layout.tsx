@@ -78,6 +78,7 @@ export default function TabsLayout() {
           tabBarIcon: ({ color, size }) => <User color={color} size={size} />,
         }}
       />
+      <Tabs.Screen name="opportunities" options={{ href: null }} />
     </Tabs>
   );
 }

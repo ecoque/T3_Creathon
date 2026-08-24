@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { Bookmark, BookmarkCheck, Calendar, ChevronRight, Handshake, Search, Sparkles, SlidersHorizontal } from 'lucide-react-native';
-import { useMemo, useState } from 'react';
+import { router } from 'expo-router';
+import { Bookmark, BookmarkCheck, Calendar, ChevronRight, FolderPlus, Handshake, Search, Sparkles, SlidersHorizontal } from 'lucide-react-native';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FlatList, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -12,6 +13,7 @@ import { ScheduleMeetingModal } from '../../components/modals/ScheduleMeetingMod
 import { WhyMatchModal } from '../../components/modals/WhyMatchModal';
 import { ROLES, ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
+import { isCorporateSchemaMissing } from '../../features/corporate/schema';
 import { isInvestorSchemaMissing } from '../../features/investor/schema';
 import { computeMatchScore, localizeMatchReasons } from '../../features/matching/scoring';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
@@ -46,15 +48,38 @@ export default function DiscoverScreen() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const isInvestor = myProfile?.role === 'yatirimci';
   const isEntrepreneur = myProfile?.role === 'girisimci';
+  const isCorporate = myProfile?.role === 'kurum';
+  const corporateSchemaUnavailable = isCorporate && (
+    myProfile.technology_need_summary === undefined
+    || myProfile.technology_need_areas === undefined
+  );
   const shortlist = useInvestorCoreFlow(meResult?.userId, isInvestor);
+  const allowedRoleOptions = useMemo<ParticipantRole[]>(
+    () => isInvestor || isCorporate
+      ? ['girisimci', 'kurum']
+      : isEntrepreneur
+        ? ['girisimci', 'kurum', 'yatirimci']
+        : ROLES,
+    [isCorporate, isEntrepreneur, isInvestor],
+  );
+
+  useEffect(() => {
+    setQuickRole((current) => current === 'all' || allowedRoleOptions.includes(current) ? current : 'all');
+    setFilter((current) => {
+      const roles = current.roles.filter((role) => allowedRoleOptions.includes(role));
+      return roles.length === current.roles.length ? current : { ...current, roles };
+    });
+  }, [allowedRoleOptions]);
 
   const visibleParticipants = useMemo(
     () => isInvestor
       ? participants.filter((profile) => ['girisimci', 'kurum'].includes(profile.role) && profile.status === 'active')
       : isEntrepreneur
         ? participants.filter((profile) => ['girisimci', 'kurum', 'yatirimci'].includes(profile.role) && profile.status !== 'passive')
+        : isCorporate
+          ? participants.filter((profile) => ['girisimci', 'kurum'].includes(profile.role) && profile.status === 'active')
         : participants,
-    [isEntrepreneur, isInvestor, participants],
+    [isCorporate, isEntrepreneur, isInvestor, participants],
   );
 
   const scored = useMemo(() => {
@@ -87,7 +112,7 @@ export default function DiscoverScreen() {
     }
     if (search.trim()) {
       const q = search.toLowerCase();
-      const hay = `${profile.full_name} ${profile.sector ?? ''} ${profile.interests.join(' ')}`.toLowerCase();
+      const hay = `${profile.full_name} ${profile.company ?? ''} ${profile.title ?? ''} ${profile.sector ?? ''} ${profile.interests.join(' ')} ${profile.goals.join(' ')}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -147,7 +172,7 @@ export default function DiscoverScreen() {
             <View style={styles.titleRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.title}>{t('matching.title')}</Text>
-                <Text style={styles.subtitle}>{t(isInvestor ? 'investor.discoverySubtitle' : isEntrepreneur ? 'entrepreneur.discoverySubtitle' : 'matching.subtitle')}</Text>
+                <Text style={styles.subtitle}>{t(isInvestor ? 'investor.discoverySubtitle' : isEntrepreneur ? 'entrepreneur.discoverySubtitle' : isCorporate ? 'corporate.discoverySubtitle' : 'matching.subtitle')}</Text>
               </View>
               <Pressable
                 style={[styles.filterBtn, isFilterActive && styles.filterBtnActive]}
@@ -181,7 +206,11 @@ export default function DiscoverScreen() {
               <FlatList
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                data={(isEntrepreneur ? ['all', 'girisimci', 'kurum', 'yatirimci'] : ['all', ...ROLES]) as (ParticipantRole | 'all')[]}
+                data={(isEntrepreneur
+                  ? ['all', 'girisimci', 'kurum', 'yatirimci']
+                  : isCorporate
+                    ? ['all', 'girisimci', 'kurum']
+                    : ['all', ...ROLES]) as (ParticipantRole | 'all')[]}
                 keyExtractor={(r) => r}
                 contentContainerStyle={{ gap: 8 }}
                 renderItem={({ item }) => {
@@ -200,14 +229,15 @@ export default function DiscoverScreen() {
             )}
 
             {participantsLoading ? <Text style={styles.flowStatus}>{t('common.loading')}</Text> : null}
-            {participantsError ? <Text style={styles.flowError}>{t(isEntrepreneur ? 'entrepreneur.discoveryLoadError' : 'investor.discoveryLoadError')}</Text> : null}
+            {participantsError ? <Text style={styles.flowError}>{t(isEntrepreneur ? 'entrepreneur.discoveryLoadError' : isCorporate && isCorporateSchemaMissing(participantsError) ? 'corporate.migrationRequired' : isCorporate ? 'corporate.discoveryLoadError' : 'investor.discoveryLoadError')}</Text> : null}
+            {corporateSchemaUnavailable ? <Text style={styles.flowError}>{t('corporate.migrationRequired')}</Text> : null}
             {isInvestor && shortlist.isLoading ? <Text style={styles.flowStatus}>{t('investor.shortlistLoading')}</Text> : null}
             {isInvestor && shortlistErrorMessage ? <Text style={styles.flowError}>{shortlistErrorMessage}</Text> : null}
 
             <View style={{ gap: 12 }}>
               <View style={styles.sectionHeaderRow}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.priorityCandidates' : isEntrepreneur ? 'entrepreneur.recommendedMatches' : 'matching.featured')}</Text>
+                  <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.priorityCandidates' : isEntrepreneur ? 'entrepreneur.recommendedMatches' : isCorporate ? 'corporate.recommendedMatches' : 'matching.featured')}</Text>
                   <View style={styles.aiBadge}>
                     <Sparkles size={10} color={colors.primary} />
                     <Text style={styles.aiBadgeText}>AI</Text>
@@ -252,7 +282,7 @@ export default function DiscoverScreen() {
                             <Text style={styles.sectorChipText}>{item.profile.sector}</Text>
                           </View>
                         ) : null}
-                        {isInvestor && item.reasons.length > 0 ? (
+                        {(isInvestor || isCorporate) && item.reasons.length > 0 ? (
                           <Text style={styles.priorityReason} numberOfLines={2}>{item.reasons[1] ?? item.reasons[0]}</Text>
                         ) : null}
                       </View>
@@ -276,10 +306,22 @@ export default function DiscoverScreen() {
                               </Text>
                             </Pressable>
                           ) : null}
+                          {isCorporate ? (
+                            <Pressable
+                              style={styles.secondaryIconBtn}
+                              onPress={() => router.push({
+                                pathname: '/(tabs)/opportunities',
+                                params: { targetProfileId: item.profile.id, openKey: String(Date.now()) },
+                              })}
+                              accessibilityLabel={t('corporate.opportunityAdd')}
+                            >
+                              <FolderPlus size={17} color={colors.primary} />
+                            </Pressable>
+                          ) : null}
                           <Pressable style={styles.matchIconBtn} onPress={() => setWhyMatchProfile(item.profile)}>
                             <Handshake size={17} color={colors.white} />
                           </Pressable>
-                          {isInvestor || isEntrepreneur ? (
+                          {isInvestor || isEntrepreneur || isCorporate ? (
                             <Pressable style={styles.secondaryIconBtn} onPress={() => { setScheduleFor(item.profile); setScheduleOpen(true); }} accessibilityLabel={t('matching.requestMeeting')}>
                               <Calendar size={17} color={colors.primary} />
                             </Pressable>
@@ -292,7 +334,7 @@ export default function DiscoverScreen() {
               )}
             </View>
 
-            <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.otherCandidates' : isEntrepreneur ? 'entrepreneur.otherMatches' : 'matching.others')}</Text>
+            <Text style={styles.sectionTitle}>{t(isInvestor ? 'investor.otherCandidates' : isEntrepreneur ? 'entrepreneur.otherMatches' : isCorporate ? 'corporate.otherMatches' : 'matching.others')}</Text>
           </View>
         }
         ListEmptyComponent={
@@ -329,7 +371,7 @@ export default function DiscoverScreen() {
                     <Text style={styles.tagPrimaryText} numberOfLines={1}>{t(ROLE_LABEL_KEY[item.profile.role])}</Text>
                   </View>
                 </View>
-                {isInvestor && item.reasons.length > 0 ? (
+                {(isInvestor || isCorporate) && item.reasons.length > 0 ? (
                   <Text style={styles.priorityReason} numberOfLines={1}>{item.reasons[1] ?? item.reasons[0]}</Text>
                 ) : null}
               </View>
@@ -346,10 +388,25 @@ export default function DiscoverScreen() {
                   </Text>
                 </Pressable>
               ) : null}
+              {isCorporate ? (
+                <Pressable
+                  style={styles.rowIconBtn}
+                  onPress={(event) => {
+                    event.stopPropagation();
+                    router.push({
+                      pathname: '/(tabs)/opportunities',
+                      params: { targetProfileId: item.profile.id, openKey: String(Date.now()) },
+                    });
+                  }}
+                  accessibilityLabel={t('corporate.opportunityAdd')}
+                >
+                  <FolderPlus size={16} color={colors.primary} />
+                </Pressable>
+              ) : null}
               <Pressable style={styles.rowIconBtn} onPress={(event) => { event.stopPropagation(); setWhyMatchProfile(item.profile); }} accessibilityLabel={t('matching.whyMatch')}>
                 <Handshake size={16} color={colors.textMuted} />
               </Pressable>
-              {isInvestor || isEntrepreneur ? (
+              {isInvestor || isEntrepreneur || isCorporate ? (
                 <Pressable style={styles.rowIconBtn} onPress={(event) => { event.stopPropagation(); setScheduleFor(item.profile); setScheduleOpen(true); }} accessibilityLabel={t('matching.requestMeeting')}>
                   <Calendar size={16} color={colors.primary} />
                 </Pressable>
@@ -366,6 +423,7 @@ export default function DiscoverScreen() {
         initialFilter={filter}
         sectorOptions={sectorOptions}
         interestOptions={interestOptions}
+        roleOptions={allowedRoleOptions}
         onApply={setFilter}
       />
 

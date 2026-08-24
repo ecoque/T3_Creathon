@@ -142,6 +142,90 @@ function computeEntrepreneurPriorityScore(entrepreneur: Profile, candidate: Prof
   return { score: Math.min(100, score), reasons: [], reasonDetails };
 }
 
+function normalizedLabel(value: string): string {
+  return value
+    .toLocaleLowerCase('tr-TR')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function computeCorporatePriorityScore(corporate: Profile, candidate: Profile): MatchResult {
+  if (!['girisimci', 'kurum'].includes(candidate.role)) return { score: 0, reasons: [] };
+
+  const candidateRole = candidate.role as 'girisimci' | 'kurum';
+  let score = candidateRole === 'girisimci' ? 24 : 14;
+  const reasonDetails: NonNullable<MatchResult['reasonDetails']> = [{
+    key: candidateRole === 'girisimci'
+      ? 'corporate.reasonStartupCandidate'
+      : 'corporate.reasonOrganizationCandidate',
+  }];
+
+  const candidateLabels = [
+    candidate.sector,
+    ...(candidate.interests ?? []),
+    ...(candidate.goals ?? []),
+  ].filter((value): value is string => !!value?.trim());
+  const normalizedCandidateLabels = new Set(candidateLabels.map(normalizedLabel));
+  const needAreaMatches = (corporate.technology_need_areas ?? [])
+    .filter((area) => {
+      const normalizedArea = normalizedLabel(area);
+      return normalizedArea.length > 0 && normalizedCandidateLabels.has(normalizedArea);
+    })
+    .slice(0, 3);
+
+  if (needAreaMatches.length > 0) {
+    score += needAreaMatches.length * 16;
+    reasonDetails.push({
+      key: 'corporate.reasonNeedArea',
+      params: { items: needAreaMatches.join(', ') },
+    });
+  }
+
+  if (
+    corporate.sector
+    && candidate.sector
+    && normalizedLabel(corporate.sector) === normalizedLabel(candidate.sector)
+  ) {
+    score += 14;
+    reasonDetails.push({ key: 'corporate.reasonSector', params: { sector: corporate.sector } });
+  }
+
+  const commonInterests = sharedItems(corporate.interests ?? [], candidate.interests ?? []).slice(0, 2);
+  if (commonInterests.length > 0) {
+    score += commonInterests.length * 6;
+    reasonDetails.push({
+      key: 'corporate.reasonInterest',
+      params: { items: commonInterests.join(', ') },
+    });
+  }
+
+  const needSummary = corporate.technology_need_summary?.trim() ?? '';
+  if (needSummary) {
+    const explicitNeedTokens = new Set(normalizedTokens((corporate.technology_need_areas ?? []).join(' ')));
+    const needTokens = new Set(normalizedTokens(needSummary).filter((token) => !explicitNeedTokens.has(token)));
+    const candidateTokens = new Set(normalizedTokens([
+      candidate.sector,
+      candidate.company,
+      candidate.title,
+      ...(candidate.interests ?? []),
+      ...(candidate.goals ?? []),
+    ].filter(Boolean).join(' ')));
+    const summaryMatches = [...needTokens].filter((token) => candidateTokens.has(token)).slice(0, 3);
+    if (summaryMatches.length > 0) {
+      score += summaryMatches.length * 4;
+      reasonDetails.push({
+        key: 'corporate.reasonNeedSummary',
+        params: { items: summaryMatches.join(', ') },
+      });
+    }
+  }
+
+  return { score: Math.min(100, score), reasons: [], reasonDetails };
+}
+
 export function localizeMatchReasons(
   result: MatchResult,
   translate: (key: string, params?: Record<string, string | number>) => string,
@@ -154,6 +238,7 @@ export function localizeMatchReasons(
 export function computeMatchScore(a: Profile, b: Profile): MatchResult {
   if (a.role === 'yatirimci') return computeInvestorPriorityScore(a, b);
   if (a.role === 'girisimci') return computeEntrepreneurPriorityScore(a, b);
+  if (a.role === 'kurum') return computeCorporatePriorityScore(a, b);
 
   let score = 0;
   const reasons: string[] = [];

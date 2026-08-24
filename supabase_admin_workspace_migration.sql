@@ -231,7 +231,10 @@ begin
   if auth.uid() is not null
     and auth.role() <> 'service_role'
     and not public.is_admin()
-    and new.status is distinct from old.status then
+    and (
+      new.status is distinct from old.status
+      or new.role is distinct from old.role
+    ) then
     raise exception 'Admin-managed profile fields cannot be changed by this user.';
   end if;
   return new;
@@ -250,15 +253,10 @@ as $$
   );
 $$;
 
-do $$
-begin
-  if not exists (select 1 from pg_trigger where tgname = 'protect_admin_profile_fields') then
-    create trigger protect_admin_profile_fields
-      before update on public.profiles
-      for each row execute function public.protect_admin_profile_fields();
-  end if;
-end
-$$;
+drop trigger if exists protect_admin_profile_fields on public.profiles;
+create trigger protect_admin_profile_fields
+  before update on public.profiles
+  for each row execute function public.protect_admin_profile_fields();
 
 -- Replace the old unconditional session reader. This is a policy-only change; no data is removed.
 drop policy if exists "sessions_select_all" on public.sessions;

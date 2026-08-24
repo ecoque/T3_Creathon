@@ -102,6 +102,20 @@ export default function MyProfileScreen() {
               </View>
             ) : null}
 
+            {profile.role === 'kurum' && ((profile.technology_need_areas?.length ?? 0) > 0 || profile.technology_need_summary?.trim()) ? (
+              <View style={styles.thesisCard}>
+                <Text style={styles.sectionTitle}>{t('corporate.publicNeedTitle')}</Text>
+                {(profile.technology_need_areas?.length ?? 0) > 0 ? (
+                  <View style={styles.chipRow}>
+                    {profile.technology_need_areas?.map((area) => (
+                      <View key={area} style={styles.interestChip}><Text style={styles.interestChipText}>{area}</Text></View>
+                    ))}
+                  </View>
+                ) : null}
+                {profile.technology_need_summary?.trim() ? <Text style={styles.thesisText}>{profile.technology_need_summary.trim()}</Text> : null}
+              </View>
+            ) : null}
+
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>{t(profile.role === 'yatirimci' ? 'investor.preferencesLabel' : 'profile.interestsTitle')}</Text>
               <View style={styles.chipRow}>

@@ -14,8 +14,9 @@ alter table public.profiles
   add column if not exists investment_focuses text[] not null default '{}';
 
 -- profiles_update_self from the base schema must never allow a participant to
--- reactivate a passive account. Reuse the admin migration's function/trigger
--- names so either migration order produces the same protection.
+-- reactivate a passive account or self-promote into another account class.
+-- Reuse the admin migration's function/trigger names so either migration
+-- order produces the same protection. Onboarding INSERT is not affected.
 create or replace function public.protect_admin_profile_fields()
 returns trigger
 language plpgsql
@@ -25,27 +26,20 @@ begin
   if auth.uid() is not null
     and auth.role() <> 'service_role'
     and not public.is_admin()
-    and new.status is distinct from old.status then
+    and (
+      new.status is distinct from old.status
+      or new.role is distinct from old.role
+    ) then
     raise exception 'Admin-managed profile fields cannot be changed by this user.';
   end if;
   return new;
 end;
 $$;
 
-do $$
-begin
-  if not exists (
-    select 1 from pg_trigger
-    where tgname = 'protect_admin_profile_fields'
-      and tgrelid = 'public.profiles'::regclass
-      and not tgisinternal
-  ) then
-    create trigger protect_admin_profile_fields
-      before update on public.profiles
-      for each row execute function public.protect_admin_profile_fields();
-  end if;
-end
-$$;
+drop trigger if exists protect_admin_profile_fields on public.profiles;
+create trigger protect_admin_profile_fields
+  before update on public.profiles
+  for each row execute function public.protect_admin_profile_fields();
 
 comment on column public.profiles.investment_thesis is
   'Required for active investor profiles and used for discovery matching.';

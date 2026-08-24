@@ -7,6 +7,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '../../constants/theme';
+import { isCorporateSchemaMissing } from '../../features/corporate/schema';
 import { isInvestorSchemaMissing } from '../../features/investor/schema';
 import { supabase } from '../../lib/supabase';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
@@ -48,6 +49,7 @@ const INTERESTS = [
 const GOALS = ['Yatırım Arama', 'Networking', 'Ortaklık', 'Öğrenme / Keşif', 'İşe Alım', 'Mentorluk Bulmak'];
 const INVESTOR_PREFERENCES = ['Erken Aşama', 'Deep Tech', 'Fintech', 'B2B SaaS', 'Yapay Zeka', 'İklim Teknolojileri'];
 const INVESTOR_GOALS = ['Yeni girişimler keşfetmek', 'Yatırım görüşmesi yapmak', 'Ortak yatırım fırsatı bulmak', 'Ekosistemi takip etmek'];
+const CORPORATE_NEED_AREAS = ['Yapay Zeka', 'Veri & Analitik', 'SaaS', 'Siber Güvenlik', 'Sürdürülebilirlik', 'Fintech', 'Donanım & IoT', 'Müşteri Deneyimi'];
 
 export default function EditProfileScreen() {
   const { t } = useTranslation();
@@ -61,6 +63,8 @@ export default function EditProfileScreen() {
   const [company, setCompany] = useState('');
   const [investmentFocuses, setInvestmentFocuses] = useState<string[]>([]);
   const [investmentThesis, setInvestmentThesis] = useState('');
+  const [technologyNeedSummary, setTechnologyNeedSummary] = useState('');
+  const [technologyNeedAreas, setTechnologyNeedAreas] = useState<string[]>([]);
   const [linkedin, setLinkedin] = useState('');
   const [interests, setInterests] = useState<string[]>([]);
   const [goals, setGoals] = useState<string[]>([]);
@@ -75,6 +79,8 @@ export default function EditProfileScreen() {
       setCompany(profile.company ?? '');
       setInvestmentFocuses(profile.investment_focuses ?? []);
       setInvestmentThesis(profile.investment_thesis ?? '');
+      setTechnologyNeedSummary(profile.technology_need_summary ?? '');
+      setTechnologyNeedAreas(profile.technology_need_areas ?? []);
       setLinkedin(profile.linkedin_url ?? '');
       setInterests(profile.interests ?? []);
       setGoals(profile.goals ?? []);
@@ -117,6 +123,12 @@ export default function EditProfileScreen() {
     });
   }
 
+  function toggleTechnologyNeedArea(item: string) {
+    setTechnologyNeedAreas((current) => current.includes(item)
+      ? current.filter((area) => area !== item)
+      : current.length >= 5 ? current : [...current, item]);
+  }
+
   async function handleSave() {
     if (!fullName.trim()) {
       setError(t('editProfile.nameRequired'));
@@ -124,6 +136,10 @@ export default function EditProfileScreen() {
     }
     if (profile?.role === 'girisimci' && (!title.trim() || !company.trim())) {
       setError(t('entrepreneur.profileRequired'));
+      return;
+    }
+    if (profile?.role === 'kurum' && (!title.trim() || !company.trim() || technologyNeedSummary.trim().length < 20 || technologyNeedAreas.length < 1)) {
+      setError(t('corporate.profileValidation'));
       return;
     }
     if (profile?.role === 'yatirimci') {
@@ -164,7 +180,9 @@ export default function EditProfileScreen() {
             investment_focuses: investmentFocuses.filter((focus) => focus !== sector),
             investment_thesis: investmentThesis.trim(),
           }
-        : {}),
+        : profile?.role === 'kurum'
+          ? { technology_need_summary: technologyNeedSummary.trim(), technology_need_areas: technologyNeedAreas }
+          : {}),
       linkedin_url: linkedin || null,
       interests,
       goals,
@@ -175,7 +193,7 @@ export default function EditProfileScreen() {
       .update(updatePayload)
       .eq('user_id', user.id);
 
-    if (updateError && !['yatirimci', 'girisimci'].includes(profile?.role ?? '') && isInvestorSchemaMissing(updateError)) {
+    if (updateError && !['yatirimci', 'girisimci', 'kurum'].includes(profile?.role ?? '') && isInvestorSchemaMissing(updateError)) {
       const legacyResult = await supabase
         .from('profiles')
         .update({
@@ -192,7 +210,7 @@ export default function EditProfileScreen() {
     setSaving(false);
 
     if (updateError) {
-      setError(isInvestorSchemaMissing(updateError) ? t(profile?.role === 'girisimci' ? 'entrepreneur.migrationRequired' : 'investor.migrationRequired') : updateError.message);
+      setError(isCorporateSchemaMissing(updateError) ? t('corporate.migrationRequired') : isInvestorSchemaMissing(updateError) ? t(profile?.role === 'girisimci' ? 'entrepreneur.migrationRequired' : 'investor.migrationRequired') : updateError.message);
       return;
     }
 
@@ -269,23 +287,23 @@ export default function EditProfileScreen() {
           ) : null}
 
           <View style={styles.field}>
-            <Text style={styles.label}>{t(profile?.role === 'yatirimci' ? 'investor.titleLabel' : profile?.role === 'girisimci' ? 'entrepreneur.titleLabel' : 'editProfile.titleLabel')}</Text>
+            <Text style={styles.label}>{t(profile?.role === 'yatirimci' ? 'investor.titleLabel' : profile?.role === 'girisimci' ? 'entrepreneur.titleLabel' : profile?.role === 'kurum' ? 'corporate.titleLabel' : 'editProfile.titleLabel')}</Text>
             <TextInput
               style={styles.input}
               value={title}
               onChangeText={setTitle}
-              placeholder={t(profile?.role === 'yatirimci' ? 'investor.titlePlaceholder' : profile?.role === 'girisimci' ? 'entrepreneur.titlePlaceholder' : 'editProfile.titlePlaceholder')}
+              placeholder={t(profile?.role === 'yatirimci' ? 'investor.titlePlaceholder' : profile?.role === 'girisimci' ? 'entrepreneur.titlePlaceholder' : profile?.role === 'kurum' ? 'corporate.titlePlaceholder' : 'editProfile.titlePlaceholder')}
               placeholderTextColor={colors.textFaint}
             />
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>{profile?.role === 'girisimci' ? t('entrepreneur.companyLabel') : profile?.role === 'yatirimci' ? t('investor.fundLabel') : t('onboarding.companyLabel')}</Text>
+            <Text style={styles.label}>{profile?.role === 'girisimci' ? t('entrepreneur.companyLabel') : profile?.role === 'yatirimci' ? t('investor.fundLabel') : profile?.role === 'kurum' ? t('corporate.companyLabel') : t('onboarding.companyLabel')}</Text>
             <TextInput
               style={styles.input}
               value={company}
               onChangeText={setCompany}
-              placeholder={profile?.role === 'girisimci' ? t('entrepreneur.companyPlaceholder') : profile?.role === 'yatirimci' ? t('investor.fundPlaceholder') : t('onboarding.companyPlaceholder')}
+              placeholder={profile?.role === 'girisimci' ? t('entrepreneur.companyPlaceholder') : profile?.role === 'yatirimci' ? t('investor.fundPlaceholder') : profile?.role === 'kurum' ? t('corporate.companyPlaceholder') : t('onboarding.companyPlaceholder')}
               placeholderTextColor={colors.textFaint}
               autoComplete="organization"
               textContentType="organizationName"
@@ -321,6 +339,31 @@ export default function EditProfileScreen() {
                 maxLength={280}
                 textAlignVertical="top"
               />
+            </View>
+          </View>
+        ) : null}
+
+        {profile?.role === 'kurum' ? (
+          <View style={styles.card}>
+            <View style={styles.field}>
+              <Text style={styles.label}>{t('corporate.needAreasLabel')}</Text>
+              <Text style={styles.hint}>{t('corporate.needAreasHint', { count: technologyNeedAreas.length })}</Text>
+              <View style={styles.chipRow}>
+                {CORPORATE_NEED_AREAS.map((area) => {
+                  const selected = technologyNeedAreas.includes(area);
+                  return (
+                    <Pressable key={area} onPress={() => toggleTechnologyNeedArea(area)} style={[styles.selectableChip, selected && styles.selectableChipSelected]}>
+                      {selected ? <Check size={12} color={colors.primary} /> : null}
+                      <Text style={[styles.chipText, selected && styles.chipTextSelected]}>{area}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>{t('corporate.needSummaryLabel')}</Text>
+              <Text style={styles.hint}>{t('corporate.needSummaryHint', { count: technologyNeedSummary.length })}</Text>
+              <TextInput style={[styles.input, styles.textArea]} value={technologyNeedSummary} onChangeText={(value) => setTechnologyNeedSummary(value.slice(0, 500))} placeholder={t('corporate.needSummaryPlaceholder')} placeholderTextColor={colors.textFaint} multiline maxLength={500} textAlignVertical="top" />
             </View>
           </View>
         ) : null}
