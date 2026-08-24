@@ -3,6 +3,7 @@ import type { Profile } from '../../types';
 export type MatchResult = {
   score: number;
   reasons: string[];
+  reasonDetails?: { key: string; params?: Record<string, string | number> }[];
 };
 
 // Girişimci ↔ yatırımcı/kurum eşleşmesi öncelikli; aynı rol (ör. girişimci-girişimci)
@@ -24,9 +25,94 @@ function sharedItems(a: string[], b: string[]): string[] {
   return a.filter((item) => bLower.has(item.toLowerCase()));
 }
 
+const INVESTOR_TOKENS_STOPLIST = new Set([
+  'acaba', 'alan', 'alanlar', 'arayan', 'bizim', 'icin', 'ile', 'olan', 'olarak',
+  'odak', 'odakli', 'erken', 'asama', 'cozum', 'cozumler', 'girişim', 'girisim',
+  'girisimler', 'sirket', 'sirketler', 'teknoloji', 'teknolojiler', 'yatirim',
+  'yatirimci', 'uzere', 'veya', 'daha', 'gibi', 'this', 'that', 'with', 'from',
+  'into', 'focus', 'focused', 'startup', 'startups', 'company', 'companies',
+  'technology', 'technologies', 'investment', 'solutions', 'stage',
+]);
+
+function normalizedTokens(value: string): string[] {
+  return value
+    .toLocaleLowerCase('tr-TR')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter((token) => token.length >= 4 && !INVESTOR_TOKENS_STOPLIST.has(token));
+}
+
+function computeInvestorPriorityScore(investor: Profile, candidate: Profile): MatchResult {
+  if (!['girisimci', 'kurum'].includes(candidate.role)) return { score: 0, reasons: [] };
+
+  let score = 20;
+  const reasonDetails: NonNullable<MatchResult['reasonDetails']> = [
+    { key: 'investor.reasonCandidate' },
+  ];
+  const primary = investor.sector?.trim();
+  const secondary = investor.investment_focuses ?? [];
+
+  if (primary && candidate.sector && primary.toLocaleLowerCase('tr-TR') === candidate.sector.toLocaleLowerCase('tr-TR')) {
+    score += 44;
+    reasonDetails.push({ key: 'investor.reasonPrimary', params: { focus: primary } });
+  } else {
+    const secondaryMatch = secondary.find(
+      (focus) => candidate.sector && focus.toLocaleLowerCase('tr-TR') === candidate.sector.toLocaleLowerCase('tr-TR'),
+    );
+    if (secondaryMatch) {
+      score += 18;
+      reasonDetails.push({ key: 'investor.reasonSecondary', params: { focus: secondaryMatch } });
+    }
+  }
+
+  const commonPreferences = sharedItems(investor.interests ?? [], candidate.interests ?? []).slice(0, 2);
+  if (commonPreferences.length > 0) {
+    score += commonPreferences.length * 8;
+    reasonDetails.push({ key: 'investor.reasonPreference', params: { items: commonPreferences.join(', ') } });
+  }
+
+  const commonGoals = sharedItems(investor.goals ?? [], candidate.goals ?? []).slice(0, 2);
+  if (commonGoals.length > 0) {
+    score += commonGoals.length * 4;
+    reasonDetails.push({ key: 'investor.reasonGoal', params: { items: commonGoals.join(', ') } });
+  }
+
+  const thesis = investor.investment_thesis?.trim() ?? '';
+  if (thesis) {
+    const focusTokens = new Set(normalizedTokens([primary, ...secondary].filter(Boolean).join(' ')));
+    const thesisTokens = new Set(normalizedTokens(thesis).filter((token) => !focusTokens.has(token)));
+    const candidateTokens = new Set(normalizedTokens([
+      candidate.sector,
+      candidate.company,
+      candidate.title,
+      ...(candidate.interests ?? []),
+      ...(candidate.goals ?? []),
+    ].filter(Boolean).join(' ')));
+    const matches = [...thesisTokens].filter((token) => candidateTokens.has(token)).slice(0, 3);
+    if (matches.length > 0) {
+      score += matches.length * 3;
+      reasonDetails.push({ key: 'investor.reasonThesis', params: { items: matches.join(', ') } });
+    }
+  }
+
+  return { score: Math.min(100, score), reasons: [], reasonDetails };
+}
+
+export function localizeMatchReasons(
+  result: MatchResult,
+  translate: (key: string, params?: Record<string, string | number>) => string,
+): string[] {
+  return result.reasonDetails?.map(({ key, params }) => translate(key, params)) ?? result.reasons;
+}
+
 // İlk taslak: basit, açıklanabilir bir puanlama. Daha sonra ağırlıklar
 // gerçek kullanım verisine göre ayarlanabilir.
 export function computeMatchScore(a: Profile, b: Profile): MatchResult {
+  if (a.role === 'yatirimci') return computeInvestorPriorityScore(a, b);
+
   let score = 0;
   const reasons: string[] = [];
 

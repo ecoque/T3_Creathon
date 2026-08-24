@@ -117,12 +117,22 @@ create table public.location_pings (
 );
 
 -- ── RLS politikaları ──────────────────────────────────────────────
--- "Enable automatic RLS" açık olduğu için her tabloda RLS zaten aktif;
--- policy eklenmezse tablo tamamen erişime kapalı kalır.
+-- SQL Editor üzerinden oluşturulan tablolarda RLS otomatik açılmadığı için burada
+-- açıkça etkinleştirilir. Policy eklenmezse tablo tamamen erişime kapalı kalır.
+alter table public.users enable row level security;
+alter table public.profiles enable row level security;
+alter table public.sessions enable row level security;
+alter table public.meeting_requests enable row level security;
+alter table public.badges enable row level security;
+alter table public.zones enable row level security;
+alter table public.stands enable row level security;
+alter table public.checkins enable row level security;
+alter table public.location_pings enable row level security;
 
--- users: herkes (giriş yapmış) temel profilleri görebilsin, kendi satırını güncelleyebilsin
-create policy "users_select_all" on public.users for select to authenticated using (true);
-create policy "users_update_self" on public.users for update to authenticated using (auth.uid() = id);
+-- users: e-posta ve admin bayrağı yalnızca satırın sahibi veya admin tarafından okunur.
+-- İstemciye update izni verilmez; aksi durumda kullanıcı kendi is_admin değerini açabilir.
+create policy "users_select_self_or_admin" on public.users for select to authenticated
+  using (auth.uid() = id or public.is_admin());
 
 -- profiles: eşleştirme/keşif için herkes görebilir, sadece kendi profilini yazabilir
 create policy "profiles_select_all" on public.profiles for select to authenticated using (true);
@@ -140,6 +150,8 @@ create policy "meetings_insert_own" on public.meeting_requests for insert to aut
   with check (auth.uid() = from_user_id);
 create policy "meetings_update_participant" on public.meeting_requests for update to authenticated
   using (auth.uid() = from_user_id or auth.uid() = to_user_id);
+create policy "meetings_admin_select" on public.meeting_requests for select to authenticated
+  using (public.is_admin());
 
 -- badges: sadece kendi rozetlerini görebilirsin (kazanım sunucu tarafında/service role ile yazılır)
 create policy "badges_select_own" on public.badges for select to authenticated using (auth.uid() = user_id);
@@ -153,6 +165,7 @@ create policy "stands_admin_write" on public.stands for all to authenticated usi
 -- checkins: sadece kendi check-in'lerini yazabilir/görebilirsin
 create policy "checkins_select_own" on public.checkins for select to authenticated using (auth.uid() = user_id);
 create policy "checkins_insert_own" on public.checkins for insert to authenticated with check (auth.uid() = user_id);
+create policy "checkins_admin_select" on public.checkins for select to authenticated using (public.is_admin());
 
 -- location_pings: sadece kendi ping'lerini yazabilir/görebilirsin
 create policy "pings_select_own" on public.location_pings for select to authenticated using (auth.uid() = user_id);

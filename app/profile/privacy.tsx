@@ -1,22 +1,84 @@
 import { router } from 'expo-router';
 import { ArrowLeft, Check, LocateFixed, Trash2 } from 'lucide-react-native';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from '../../constants/theme';
+import {
+  deleteMyLocationHistory,
+  isLocationTrackingActive,
+  startLocationTracking,
+  stopLocationTracking,
+} from '../../lib/locationTracking';
+import { useCurrentProfile } from '../../lib/useCurrentProfile';
 
-// Not: Konum paylaşımı tercihi şu an yalnızca UI seviyesinde tutulur; gerçek arka
-// plan konum takibi (expo-location/expo-task-manager) Faz 2'de eklenecek.
 export default function PrivacyScreen() {
   const { t } = useTranslation();
-  const [locationSharing, setLocationSharing] = useState(true);
+  const { data: meResult } = useCurrentProfile();
+  const [locationSharing, setLocationSharing] = useState(false);
+  const [checkingStatus, setCheckingStatus] = useState(true);
+  const [updating, setUpdating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Ekran her açıldığında gerçek takip durumunu (uygulama yeniden başlatılmış
+  // olabilir, izin sonradan geri alınmış olabilir vb.) native taraftan sorar.
+  useEffect(() => {
+    let active = true;
+    isLocationTrackingActive().then((started) => {
+      if (active) {
+        setLocationSharing(started);
+        setCheckingStatus(false);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function showToast(message: string) {
     setToast(message);
     setTimeout(() => setToast(null), 2500);
+  }
+
+  async function handleToggle(next: boolean) {
+    setUpdating(true);
+    try {
+      if (next) {
+        const result = await startLocationTracking();
+        if (result === 'granted') {
+          setLocationSharing(true);
+          showToast(t('privacyScreen.toggleOn'));
+        } else if (result === 'foreground-only') {
+          setLocationSharing(false);
+          showToast(t('privacyScreen.permissionForegroundOnly'));
+        } else {
+          setLocationSharing(false);
+          showToast(t('privacyScreen.permissionDenied'));
+        }
+      } else {
+        await stopLocationTracking();
+        setLocationSharing(false);
+        showToast(t('privacyScreen.toggleOff'));
+      }
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  async function handleDeleteData() {
+    if (!meResult?.userId) return;
+    setDeleting(true);
+    try {
+      await deleteMyLocationHistory(meResult.userId);
+      showToast(t('privacyScreen.deleted'));
+    } catch {
+      showToast(t('privacyScreen.deleteError'));
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -54,15 +116,16 @@ export default function PrivacyScreen() {
             <Text style={styles.toggleTitle}>{t('privacyScreen.toggleTitle')}</Text>
             <Text style={styles.toggleDesc}>{t('privacyScreen.toggleDesc')}</Text>
           </View>
-          <Switch
-            value={locationSharing}
-            onValueChange={(next) => {
-              setLocationSharing(next);
-              showToast(next ? t('privacyScreen.toggleOn') : t('privacyScreen.toggleOff'));
-            }}
-            trackColor={{ true: colors.primary, false: colors.surfaceHigh }}
-            thumbColor={colors.white}
-          />
+          {checkingStatus || updating ? (
+            <ActivityIndicator color={colors.primary} />
+          ) : (
+            <Switch
+              value={locationSharing}
+              onValueChange={(next) => void handleToggle(next)}
+              trackColor={{ true: colors.primary, false: colors.surfaceHigh }}
+              thumbColor={colors.white}
+            />
+          )}
         </View>
 
         <View style={styles.dangerCard}>
@@ -70,10 +133,17 @@ export default function PrivacyScreen() {
           <Text style={styles.dangerBody}>{t('privacyScreen.dataBody')}</Text>
           <Pressable
             style={styles.deleteBtn}
-            onPress={() => showToast(t('privacyScreen.deleted'))}
+            onPress={() => void handleDeleteData()}
+            disabled={deleting || !meResult?.userId}
           >
-            <Trash2 size={16} color={colors.danger} />
-            <Text style={styles.deleteBtnText}>{t('privacyScreen.deleteButton')}</Text>
+            {deleting ? (
+              <ActivityIndicator color={colors.danger} size="small" />
+            ) : (
+              <>
+                <Trash2 size={16} color={colors.danger} />
+                <Text style={styles.deleteBtnText}>{t('privacyScreen.deleteButton')}</Text>
+              </>
+            )}
           </Pressable>
         </View>
       </ScrollView>

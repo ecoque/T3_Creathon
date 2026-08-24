@@ -37,7 +37,11 @@ import type { Profile, Session } from '../../types';
 const GAP_SUGGESTION_THRESHOLD_MS = 60 * 60 * 1000;
 
 async function fetchSessions(): Promise<Session[]> {
-  const { data, error } = await supabase.from('sessions').select('*').order('start_time', { ascending: true });
+  const { data, error } = await supabase
+    .from('sessions')
+    .select('*')
+    .in('status', ['published', 'live', 'delayed', 'completed'])
+    .order('start_time', { ascending: true });
   if (error) throw error;
   return (data ?? []) as Session[];
 }
