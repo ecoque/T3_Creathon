@@ -1,16 +1,29 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { Bell, ChevronRight, Edit3, Flag, LogOut, MapPin, Rocket } from 'lucide-react-native';
+import {
+  Award,
+  Bell,
+  ChevronRight,
+  Edit3,
+  FileDown,
+  Flag,
+  LogOut,
+  MapPin,
+  QrCode,
+  Rocket,
+} from 'lucide-react-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { AppHeader } from '../../components/AppHeader';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { ROLE_LABEL_KEY } from '../../constants/roles';
 import { colors } from '../../constants/theme';
+import { buildCertificateHtml } from '../../lib/certificateExport';
 import { supabase } from '../../lib/supabase';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
+import { useMyBadges } from '../../lib/useMyBadges';
 
 function initialsFor(name?: string) {
   if (!name) return '?';
@@ -22,12 +35,54 @@ export default function MyProfileScreen() {
   const queryClient = useQueryClient();
   const { data: meResult } = useCurrentProfile();
   const profile = meResult?.profile;
+  const badgesQuery = useMyBadges();
+  const badges = badgesQuery.data ?? [];
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [downloadingCertificate, setDownloadingCertificate] = useState(false);
 
   async function handleLogout() {
     await supabase.auth.signOut();
     queryClient.clear();
     router.replace('/auth');
+  }
+
+  // expo-print/expo-sharing STATİK import EDİLMİYOR — bkz. types/lazy-require.d.ts
+  // ve components/admin/AdminMapManagement.tsx'teki eski statik import
+  // hatasının notu. require() burada, sadece bu buton basıldığında çalışır.
+  async function handleDownloadCertificate() {
+    if (!profile) return;
+    setDownloadingCertificate(true);
+    try {
+      let Print: any;
+      let Sharing: any;
+      try {
+        Print = require('expo-print');
+        Sharing = require('expo-sharing');
+      } catch {
+        Alert.alert(t('badges.certificateTitle'), t('badges.nativeModuleMissing'));
+        return;
+      }
+      const html = buildCertificateHtml(
+        profile.full_name,
+        'TakeOff',
+        badges.map((b) => b.name),
+        new Date().toLocaleString('tr-TR'),
+      );
+      const { uri } = await Print.printToFileAsync({ html });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: t('badges.certificateTitle') });
+      } else {
+        Alert.alert(t('badges.certificateTitle'), t('badges.shareUnavailable'));
+      }
+    } catch (error) {
+      Alert.alert(
+        t('badges.certificateTitle'),
+        error instanceof Error ? error.message : t('badges.certificateError'),
+      );
+    } finally {
+      setDownloadingCertificate(false);
+    }
   }
 
   return (
@@ -141,6 +196,56 @@ export default function MyProfileScreen() {
                   );
                 })}
               </View>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>{t('badges.myBadgesTitle')}</Text>
+              {badges.length === 0 ? (
+                <Text style={styles.badgesEmptyText}>{t('badges.myBadgesEmpty')}</Text>
+              ) : (
+                <View style={styles.badgeList}>
+                  {badges.map((badge) => (
+                    <View key={badge.id} style={styles.badgeRow}>
+                      <Award size={16} color={colors.primary} />
+                      <Text style={styles.badgeRowText} numberOfLines={1}>
+                        {badge.name}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            <View style={styles.menuCard}>
+              <Pressable style={styles.menuRow} onPress={() => router.push('/profile/scan-badge')}>
+                <View style={styles.menuIcon}>
+                  <QrCode size={18} color={colors.textMuted} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.menuTitle}>{t('badges.scanQrTitle')}</Text>
+                  <Text style={styles.menuDesc}>{t('badges.scanQrDesc')}</Text>
+                </View>
+                <ChevronRight size={18} color={colors.textFaint} />
+              </Pressable>
+              <View style={styles.menuDivider} />
+              <Pressable
+                style={styles.menuRow}
+                onPress={handleDownloadCertificate}
+                disabled={downloadingCertificate}
+              >
+                <View style={styles.menuIcon}>
+                  {downloadingCertificate ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <FileDown size={18} color={colors.textMuted} />
+                  )}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.menuTitle}>{t('badges.downloadCertificate')}</Text>
+                  <Text style={styles.menuDesc}>{t('badges.downloadCertificateDesc')}</Text>
+                </View>
+                <ChevronRight size={18} color={colors.textFaint} />
+              </Pressable>
             </View>
 
             <View style={styles.menuCard}>
@@ -274,6 +379,20 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   goalChipText: { fontSize: 13, fontWeight: '700', color: colors.primary },
+  badgesEmptyText: { color: colors.textMuted, fontSize: 12, lineHeight: 18 },
+  badgeList: { gap: 8 },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: colors.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  badgeRowText: { flex: 1, fontSize: 13, fontWeight: '700', color: colors.text },
   menuCard: {
     backgroundColor: colors.white,
     borderRadius: 18,

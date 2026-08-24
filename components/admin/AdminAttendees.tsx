@@ -42,7 +42,7 @@ type AdminAttendeesProps = {
   onDeleteAttendee: (attendee: AdminAttendee) => void;
 };
 
-const ROLES: AttendeeRole[] = ['Girişimci', 'Yatırımcı', 'Kurum / Partner', 'Ziyaretçi'];
+const ROLES: AttendeeRole[] = ['Girişimci', 'Yatırımcı', 'Kurum / Partner', 'Ziyaretçi', 'Görevli'];
 
 const ROLE_PALETTE: Record<
   AttendeeRole,
@@ -56,6 +56,7 @@ const ROLE_PALETTE: Record<
   },
   'Kurum / Partner': { color: '#24549a', backgroundColor: '#e7f0ff', borderColor: '#c7daf5' },
   Ziyaretçi: { color: '#6d3bb8', backgroundColor: '#f2eaff', borderColor: '#decdf7' },
+  Görevli: { color: '#0f766e', backgroundColor: '#e6f6f4', borderColor: '#bdeae4' },
 };
 
 function initials(name: string) {
@@ -393,7 +394,7 @@ export function AdminAttendees({
           ...result,
           [role]: attendees.filter((attendee) => attendee.role === role).length,
         }),
-        { Girişimci: 0, Yatırımcı: 0, 'Kurum / Partner': 0, Ziyaretçi: 0 },
+        { Girişimci: 0, Yatırımcı: 0, 'Kurum / Partner': 0, Ziyaretçi: 0, Görevli: 0 },
       ),
     [attendees],
   );

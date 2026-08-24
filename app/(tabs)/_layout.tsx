@@ -1,9 +1,10 @@
 import { Tabs } from 'expo-router';
-import { Calendar, CalendarDays, Compass, Handshake, Map, User } from 'lucide-react-native';
+import { Calendar, CalendarDays, ClipboardList, Compass, Handshake, Map, User } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { isStaffRole } from '../../constants/roles';
 import { colors } from '../../constants/theme';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useMeetingRequests } from '../../lib/useMeetingRequests';
@@ -30,6 +31,7 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const { data: meResult } = useCurrentProfile();
   const isVisitor = meResult?.profile?.role === 'ziyaretci';
+  const isStaff = isStaffRole(meResult?.profile?.role);
 
   return (
     <Tabs
@@ -81,6 +83,16 @@ export default function TabsLayout() {
           title: t('meetings.title'),
           tabBarIcon: ({ color, size }) => <MeetingsIcon color={color} size={size} disabled={isVisitor || !meResult?.profile} />,
           href: isVisitor || !meResult?.profile ? null : undefined,
+        }}
+      />
+      <Tabs.Screen
+        name="staff"
+        options={{
+          title: t('staff.tabTitle'),
+          tabBarIcon: ({ color, size }) => <ClipboardList color={color} size={size} />,
+          // Only staff ("gorevli") accounts get this extra tab; everyone else
+          // keeps their normal participant tab set untouched.
+          href: isStaff ? undefined : null,
         }}
       />
       <Tabs.Screen

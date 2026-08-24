@@ -590,7 +590,9 @@ export function StageEditorModal({
   );
 }
 
-const ATTENDEE_ROLES: AttendeeRole[] = ['Girişimci', 'Yatırımcı', 'Kurum / Partner', 'Ziyaretçi'];
+// 'Görevli' burada admin'in bir katılımcıyı görevli yapabilmesi için kasıtlı
+// olarak listede — onboarding rol seçim ekranında ASLA gösterilmiyor.
+const ATTENDEE_ROLES: AttendeeRole[] = ['Girişimci', 'Yatırımcı', 'Kurum / Partner', 'Ziyaretçi', 'Görevli'];
 
 export function AttendeeEditorModal({
   visible,

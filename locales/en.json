@@ -386,6 +386,8 @@
     "subtitle": "Venue floor plan, booth and stage locations.",
     "layerBooths": "Booths",
     "layerStages": "Stages",
+    "layerWaterStations": "Water Stations",
+    "waterStationTag": "Water Station",
     "noFloorPlan": "The organizer hasn't uploaded a floor plan yet.",
     "selectPin": "Select a booth or stage on the map to see details.",
     "boothTag": "Booth",
@@ -457,5 +459,52 @@
     "previewTitle": "Preview participant view",
     "previewDescription": "Browse the app as a regular participant would see it. Use your device's back button to return.",
     "comingSoon": "Adding/editing booths is coming soon."
+  },
+  "meals": {
+    "cardTitle": "Today's Menu",
+    "yourSlot": "Your Meal Time: {{start}} - {{end}}",
+    "slotLoading": "Calculating your meal time..."
+  },
+  "staff": {
+    "roleLabel": "Staff",
+    "tabTitle": "Staff",
+    "title": "Staff Panel",
+    "subtitle": "Entrepreneurs you're responsible for and water station requests.",
+    "assignedEntrepreneurs": "Entrepreneurs You're Responsible For",
+    "noAssignments": "No entrepreneurs have been assigned to you yet.",
+    "unknownProfile": "Unknown profile"
+  },
+  "waterStations": {
+    "title": "Water Stations",
+    "statusActive": "Active",
+    "statusReportedEmpty": "Out of Water",
+    "statusDispatched": "On the Way",
+    "statusResolved": "Resolved",
+    "reportEmpty": "Out of Water, Request Refill",
+    "markDispatched": "On the Way",
+    "markResolved": "Resolved",
+    "empty": "There are no water stations yet.",
+    "showResolved": "Show resolved",
+    "hideResolved": "Hide resolved",
+    "alreadyReported": "There is already an open request for this station."
+  },
+  "badges": {
+    "myBadgesTitle": "My Badges",
+    "myBadgesEmpty": "You haven't earned any badges yet. Scan a session's QR code to earn one.",
+    "scanQrTitle": "Scan QR",
+    "scanQrDesc": "Scan a session QR code to earn a badge",
+    "downloadCertificate": "Download My Certificate",
+    "downloadCertificateDesc": "Get your participation certificate as a PDF",
+    "certificateTitle": "Participation Certificate",
+    "certificateError": "The certificate could not be created, try again.",
+    "shareUnavailable": "The PDF was created but sharing isn't available on this device.",
+    "nativeModuleMissing": "This feature requires the app to be installed with an up-to-date build.",
+    "cameraPermissionDenied": "Camera permission is required to scan a QR code. You can allow it from device settings.",
+    "scanHint": "Align the session QR code inside the frame.",
+    "scanInvalid": "This isn't a TakeOff session QR code.",
+    "scanSuccess": "You earned the \"{{title}}\" badge!",
+    "scanAlreadyOwned": "You already earned the \"{{title}}\" badge.",
+    "scanError": "The badge could not be added, try again.",
+    "scanAgain": "Scan Again"
   }
 }

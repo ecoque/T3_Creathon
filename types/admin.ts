@@ -7,7 +7,11 @@ export type AdminViewType =
   | 'map_management'
   | 'attendees'
   | 'announcements'
-  | 'settings';
+  | 'settings'
+  | 'meals'
+  | 'staff'
+  | 'water_stations'
+  | 'session_qr';
 
 export type ProgramViewMode = 'list' | 'calendar';
 
@@ -155,7 +159,10 @@ export interface ZoneDensityInfo {
   radiusMeters: number;
 }
 
-export type AttendeeRole = 'Girişimci' | 'Yatırımcı' | 'Kurum / Partner' | 'Ziyaretçi';
+// 'Görevli' (staff) is admin-assigned only — it never appears in the
+// onboarding role picker (bkz. app/onboarding/index.tsx), only in this admin
+// attendee editor's role dropdown (bkz. AdminWorkspaceModals.tsx).
+export type AttendeeRole = 'Girişimci' | 'Yatırımcı' | 'Kurum / Partner' | 'Ziyaretçi' | 'Görevli';
 export type AttendeeStatus = 'active' | 'passive';
 
 export interface AdminAttendee {

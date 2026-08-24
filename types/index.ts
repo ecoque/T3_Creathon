@@ -98,6 +98,44 @@ export interface Badge {
   user_id: string;
   name: string;
   awarded_at: string;
+  session_id?: string | null;
+}
+
+export interface Meal {
+  id: string;
+  event_date: string;
+  title: string;
+  description?: string | null;
+}
+
+export interface MealAssignment {
+  id: string;
+  user_id: string;
+  event_date: string;
+  slot_start: string;
+  slot_end: string;
+}
+
+export type WaterStationStatus = 'active' | 'reported_empty' | 'dispatched' | 'resolved';
+
+export interface WaterStation {
+  id: string;
+  name: string;
+  zone_id?: string | null;
+  map_x: number;
+  map_y: number;
+  status: WaterStationStatus;
+  reported_by?: string | null;
+  reported_at?: string | null;
+  resolved_at?: string | null;
+}
+
+export interface StaffAssignment {
+  id: string;
+  staff_user_id: string;
+  entrepreneur_profile_id: string;
+  zone_id?: string | null;
+  created_at: string;
 }
 
 export interface CheckIn {

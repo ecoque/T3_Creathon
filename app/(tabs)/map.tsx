@@ -1,5 +1,5 @@
 import { useLocalSearchParams } from 'expo-router';
-import { Check, MapPin, Navigation, Radio, Search, Store, X } from 'lucide-react-native';
+import { Check, Droplet, MapPin, Navigation, Radio, Search, Store, X } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -17,12 +17,15 @@ import { Circle, Line, Polyline, Svg } from 'react-native-svg';
 
 import { AppHeader } from '../../components/AppHeader';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
+import { isStaffRole } from '../../constants/roles';
 import { colors } from '../../constants/theme';
 import { ZONE_COLORS, ZONE_LETTER, ZONE_ORDER, isBoothPlaced, zoneQuadrant } from '../../lib/boothGrid';
 import { DEFAULT_WALL_THICKNESS, findRoute, type RouteObstacle, type RoutePoint } from '../../lib/routePlanner';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useImageAspectRatio } from '../../lib/useImageAspectRatio';
+import { useIsAdmin } from '../../lib/useIsAdmin';
 import { useVenueMap } from '../../lib/useVenueMap';
+import { WATER_STATION_STATUS_LABEL_KEY, useReportWaterStationEmpty, useWaterStations } from '../../lib/useWaterStations';
 
 // Stant ve sahnelerin krokideki yaklaşık "ayak izi" — rota hesaplanırken bu
 // yarıçap kadar alan etraflarından dolanılıyor (bkz. lib/routePlanner.ts).
@@ -163,9 +166,14 @@ export default function MapScreen() {
   const params = useLocalSearchParams<{ locationName?: string }>();
   const { data: meResult } = useCurrentProfile();
   const { data, isLoading } = useVenueMap();
+  const { data: waterStations = [] } = useWaterStations();
+  const { data: isAdmin } = useIsAdmin();
+  const isStaff = isStaffRole(meResult?.profile?.role);
+  const canManageWater = isStaff || !!isAdmin;
+  const reportWaterEmpty = useReportWaterStationEmpty();
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [layers, setLayers] = useState({ booths: true, stages: true });
+  const [layers, setLayers] = useState({ booths: true, stages: true, water: true });
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [routeStartKey, setRouteStartKey] = useState<string | null>(null);
   const [routeEndKey, setRouteEndKey] = useState<string | null>(null);
@@ -206,6 +214,9 @@ export default function MapScreen() {
     selected?.type === 'booth' ? data?.booths.find((booth) => `booth:${booth.id}` === selected.key) : undefined;
   const selectedStage =
     selected?.type === 'stage' ? data?.stages.find((stage) => `stage:${stage.id}` === selected.key) : undefined;
+  const selectedWaterStation = selectedKey?.startsWith('water:')
+    ? waterStations.find((station) => `water:${station.id}` === selectedKey)
+    : undefined;
 
   // Bir oturumun konumuna ("location" metnine) en yakın gerçek sahneyi
   // bulup otomatik seçiyor — bkz. app/(tabs)/home.tsx > goToMap.
@@ -220,7 +231,7 @@ export default function MapScreen() {
     if (stage) setSelectedKey(`stage:${stage.id}`);
   }, [params.locationName, data]);
 
-  function toggleLayer(key: 'booths' | 'stages') {
+  function toggleLayer(key: 'booths' | 'stages' | 'water') {
     setLayers((current) => ({ ...current, [key]: !current[key] }));
   }
 
@@ -311,6 +322,11 @@ export default function MapScreen() {
             active={layers.stages}
             label={`${t('map.layerStages')} (${data?.stages.length || 0})`}
             onPress={() => toggleLayer('stages')}
+          />
+          <LayerToggle
+            active={layers.water}
+            label={`${t('map.layerWaterStations')} (${waterStations.length})`}
+            onPress={() => toggleLayer('water')}
           />
         </View>
 
@@ -457,6 +473,27 @@ export default function MapScreen() {
                     );
                   })
                 : null}
+
+              {layers.water
+                ? waterStations.map((station) => {
+                    const key = `water:${station.id}`;
+                    const active = selectedKey === key;
+                    return (
+                      <Pressable
+                        key={key}
+                        onPress={() => selectLocation(key)}
+                        style={[
+                          styles.waterPin,
+                          { left: `${station.map_x}%`, top: `${station.map_y}%` },
+                          active && styles.waterPinSelected,
+                          station.status !== 'active' && styles.waterPinAlert,
+                        ]}
+                      >
+                        <Droplet size={12} color={colors.white} />
+                      </Pressable>
+                    );
+                  })
+                : null}
             </View>
           )}
         </View>
@@ -527,6 +564,36 @@ export default function MapScreen() {
                 <Text style={styles.detailActionText}>{t('map.routeSetEnd')}</Text>
               </Pressable>
             </View>
+          </View>
+        ) : selectedWaterStation ? (
+          <View style={styles.detailCard}>
+            <View style={styles.detailHeaderRow}>
+              <Text style={styles.detailTag}>{t('map.waterStationTag')}</Text>
+              <Text
+                style={[
+                  styles.detailBoothNo,
+                  selectedWaterStation.status !== 'active' && styles.waterStatusAlertText,
+                ]}
+              >
+                {t(WATER_STATION_STATUS_LABEL_KEY[selectedWaterStation.status])}
+              </Text>
+            </View>
+            <Text style={styles.detailTitle}>{selectedWaterStation.name}</Text>
+            {canManageWater && selectedWaterStation.status === 'active' ? (
+              <Pressable
+                style={styles.waterReportBtn}
+                disabled={reportWaterEmpty.isPending}
+                onPress={() => reportWaterEmpty.mutate(selectedWaterStation.id)}
+              >
+                {reportWaterEmpty.isPending ? (
+                  <ActivityIndicator size="small" color={colors.white} />
+                ) : (
+                  <Text style={styles.waterReportBtnText}>{t('waterStations.reportEmpty')}</Text>
+                )}
+              </Pressable>
+            ) : canManageWater ? (
+              <Text style={styles.detailDesc}>{t('waterStations.alreadyReported')}</Text>
+            ) : null}
           </View>
         ) : (
           <View style={styles.emptyCard}>
@@ -726,6 +793,31 @@ const styles = StyleSheet.create({
   stagePinText: { flexShrink: 1, color: colors.white, fontSize: 8, fontWeight: '800' },
   pinRouteStart: { borderColor: colors.success, borderWidth: 2 },
   pinRouteEnd: { borderColor: colors.danger, borderWidth: 2 },
+  waterPin: {
+    position: 'absolute',
+    zIndex: 5,
+    width: 22,
+    height: 22,
+    transform: [{ translateX: -11 }, { translateY: -11 }],
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: colors.white,
+    backgroundColor: '#0ea5e9',
+  },
+  waterPinSelected: { transform: [{ translateX: -11 }, { translateY: -11 }, { scale: 1.15 }] },
+  waterPinAlert: { backgroundColor: colors.danger },
+  waterReportBtn: {
+    marginTop: 8,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: colors.danger,
+  },
+  waterReportBtnText: { color: colors.white, fontSize: 12, fontWeight: '800' },
+  waterStatusAlertText: { color: colors.danger },
   detailCard: {
     backgroundColor: colors.surface,
     borderRadius: 16,

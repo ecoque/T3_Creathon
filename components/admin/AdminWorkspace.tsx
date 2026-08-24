@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleAlert,
+  Droplet,
   Handshake,
   LayoutDashboard,
   LogOut,
@@ -15,13 +16,16 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  QrCode,
   RefreshCw,
   Search,
   Settings,
   ShieldCheck,
   Smartphone,
   Store,
+  UserCog,
   Users,
+  UtensilsCrossed,
   X,
   Zap,
 } from 'lucide-react-native';
@@ -56,9 +60,13 @@ import { AdminDashboard } from './AdminDashboard';
 import { AdminMapManagement } from './AdminMapManagement';
 import { AdminAnnouncements } from './AdminAnnouncements';
 import { AdminAttendees } from './AdminAttendees';
+import { AdminMeals } from './AdminMeals';
 import { AdminNotificationsDrawer } from './AdminNotificationsDrawer';
 import { AdminProgram } from './AdminProgram';
+import { AdminSessionQR } from './AdminSessionQR';
+import { AdminStaffAssignments } from './AdminStaffAssignments';
 import { AdminVenuesAndStands } from './AdminVenuesAndStands';
+import { AdminWaterStations } from './AdminWaterStations';
 import { TakeOffLogo } from '../TakeOffLogo';
 import { colors } from '../../constants/theme';
 import { useAdminStore } from '../../lib/adminStore';
@@ -83,15 +91,19 @@ const NAV: { id: AdminViewType; label: string; icon: IconType }[] = [
   { id: 'program', label: 'Program Yönetimi', icon: CalendarDays },
   { id: 'venues_and_stands', label: 'Alanlar & Stantlar', icon: Store },
   { id: 'map_management', label: 'Harita Yönetimi', icon: MapIcon },
+  { id: 'session_qr', label: 'Oturum QR', icon: QrCode },
+  { id: 'meals', label: 'Yemek Menüsü', icon: UtensilsCrossed },
+  { id: 'water_stations', label: 'Su İstasyonları', icon: Droplet },
   { id: 'attendees', label: 'Katılımcılar', icon: Users },
+  { id: 'staff', label: 'Görevliler', icon: UserCog },
   { id: 'announcements', label: 'Duyurular', icon: Megaphone },
   { id: 'settings', label: 'Etkinlik Ayarları', icon: Settings },
 ];
 
 const NAV_GROUPS: { label: string; items: AdminViewType[] }[] = [
   { label: 'DASHBOARD', items: ['dashboard'] },
-  { label: 'ETKİNLİK', items: ['program', 'venues_and_stands', 'map_management'] },
-  { label: 'KATILIMCILAR', items: ['attendees'] },
+  { label: 'ETKİNLİK', items: ['program', 'venues_and_stands', 'map_management', 'session_qr', 'meals', 'water_stations'] },
+  { label: 'KATILIMCILAR', items: ['attendees', 'staff'] },
   { label: 'İLETİŞİM', items: ['announcements'] },
   { label: 'SİSTEM', items: ['settings'] },
 ];
@@ -345,6 +357,22 @@ export function AdminWorkspace() {
     );
   }
 
+  function SessionQR() {
+    return <AdminSessionQR sessions={store.sessions} />;
+  }
+
+  function Meals() {
+    return <AdminMeals />;
+  }
+
+  function WaterStations() {
+    return <AdminWaterStations />;
+  }
+
+  function Staff() {
+    return <AdminStaffAssignments />;
+  }
+
   function SettingsView() {
     return (
       <View style={s.stack}>
@@ -425,7 +453,11 @@ export function AdminWorkspace() {
     if (view === 'dashboard') return <Dashboard />;
     if (view === 'program') return <Program />;
     if (view === 'map_management') return <MapManager />;
+    if (view === 'session_qr') return <SessionQR />;
+    if (view === 'meals') return <Meals />;
+    if (view === 'water_stations') return <WaterStations />;
     if (view === 'attendees') return <Attendees />;
+    if (view === 'staff') return <Staff />;
     if (view === 'announcements') return <Announcements />;
     return <SettingsView />;
   }

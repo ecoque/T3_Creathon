@@ -139,6 +139,7 @@ const participantRole: Record<string, AttendeeRole> = {
   yatirimci: 'Yatırımcı',
   kurum: 'Kurum / Partner',
   ziyaretci: 'Ziyaretçi',
+  gorevli: 'Görevli',
 };
 
 const databaseRole: Record<AttendeeRole, string> = {
@@ -146,6 +147,7 @@ const databaseRole: Record<AttendeeRole, string> = {
   Yatırımcı: 'yatirimci',
   'Kurum / Partner': 'kurum',
   Ziyaretçi: 'ziyaretci',
+  Görevli: 'gorevli',
 };
 
 function zoneCode(row: Row, index = 0): AdminStage['zone'] {

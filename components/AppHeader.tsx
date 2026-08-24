@@ -7,7 +7,7 @@ import { TakeOffLogo } from './TakeOffLogo';
 import { colors } from '../constants/theme';
 import type { Profile } from '../types';
 
-type TabId = 'ajanda' | 'kesfet' | 'toplantilar' | 'harita' | 'profil';
+type TabId = 'ajanda' | 'kesfet' | 'toplantilar' | 'harita' | 'profil' | 'gorevli';
 
 type AppHeaderProps = {
   activeTab: TabId;

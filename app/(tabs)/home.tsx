@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppHeader } from '../../components/AppHeader';
+import { MealCard } from '../../components/MealCard';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { ScheduleMeetingModal } from '../../components/modals/ScheduleMeetingModal';
 import { SessionDetailModal } from '../../components/modals/SessionDetailModal';
@@ -463,6 +464,8 @@ function ParticipantHomeScreen() {
             {bookmarkQuery.error || toggleBookmarkMutation.error ? (
               <Text style={styles.bookmarkSyncError}>{t('home.bookmarkSyncError')}</Text>
             ) : null}
+
+            <MealCard />
 
             <View style={styles.viewModeContainer}>
               <View style={styles.viewModeRow}>

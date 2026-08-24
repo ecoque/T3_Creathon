@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { AppHeader } from '../../components/AppHeader';
+import { MealCard } from '../../components/MealCard';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { SessionDetailModal } from '../../components/modals/SessionDetailModal';
 import { colors } from '../../constants/theme';
@@ -132,6 +133,8 @@ export function VisitorEventsScreen() {
                 <Text style={styles.countLabel}>{t('visitorProgram.session')}</Text>
               </View>
             </View>
+
+            <MealCard />
 
             <View style={styles.searchBox}>
               <Search size={18} color={colors.textMuted} />
