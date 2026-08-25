@@ -16,7 +16,7 @@ import type {
 } from '../types/admin';
 import { isBoothPlaced, nextBoothNumber, zoneForPercent } from './boothGrid';
 import { supabase } from './supabase';
-import { computeLiveZoneOccupancy, LIVE_WINDOW_MS } from './zoneDensity';
+import { HEATMAP_GRID_COLS, HEATMAP_GRID_ROWS, LIVE_WINDOW_MS, type DensityGridCell } from './zoneDensity';
 
 type Row = Record<string, any>;
 
@@ -207,6 +207,9 @@ function mapSettings(row?: Row): EventSettings {
     logoUrl: row.logo_url || undefined,
     floorPlanUrl: row.floor_plan_url || undefined,
     floorPlanWalls: Array.isArray(row.floor_plan_walls) ? row.floor_plan_walls : [],
+    venueCenterLat: row.venue_center_lat != null ? Number(row.venue_center_lat) : null,
+    venueCenterLng: row.venue_center_lng != null ? Number(row.venue_center_lng) : null,
+    venueRadiusMeters: Number(row.venue_radius_meters || 150),
     openingTime: row.opening_time,
     closingTime: row.closing_time,
     locationTrackingStart: row.location_tracking_start,
@@ -226,7 +229,6 @@ function mapSettings(row?: Row): EventSettings {
 }
 
 export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
-  const liveWindowStart = new Date(Date.now() - LIVE_WINDOW_MS).toISOString();
   const results = await Promise.all([
     supabase.from('zones').select('*').order('name'),
     supabase.from('stages').select('*').order('name'),
@@ -240,7 +242,6 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
     supabase.from('meeting_requests').select('*').order('created_at', { ascending: false }),
     supabase.from('checkins').select('*'),
     supabase.from('admin_logs').select('*').order('created_at', { ascending: false }).limit(30),
-    supabase.from('location_pings').select('user_id,lat,lng,timestamp').gte('timestamp', liveWindowStart),
   ]);
   const labels = [
     'Bölgeler alınamadı',
@@ -255,11 +256,36 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
     'Görüşmeler alınamadı',
     'Check-in kayıtları alınamadı',
     'Admin günlükleri alınamadı',
-    'Canlı konum verileri alınamadı',
   ];
   results.forEach((result, index) => ensure(result, labels[index]));
 
-  const [zoneResult, stageResult, sessionResult, standResult, profileResult, privateAttendeeResult, userResult, announcementResult, settingsResult, meetingResult, checkinResult, logResult, livePingResult] = results;
+  const [zoneResult, stageResult, sessionResult, standResult, profileResult, privateAttendeeResult, userResult, announcementResult, settingsResult, meetingResult, checkinResult, logResult] = results;
+
+  // Isı haritası ızgarası + bölge bazlı canlı kişi sayısı artık TEK bir RPC'den
+  // geliyor (bkz. supabase_venue_center_migration.sql > get_live_density_grid) —
+  // hesaplama Postgres tarafında SECURITY DEFINER bir fonksiyonla yapılıyor ki
+  // normal katılımcılar RLS'yi atlayıp başkalarının ham konumunu okumasın,
+  // sadece özetlenmiş hücre sayıları dönsün. Bu çağrı BİLEREK ayrı bir
+  // try/catch'te: migration henüz çalıştırılmadıysa (fonksiyon yok) admin
+  // panelinin geri kalanı yine de çalışmaya devam etsin, sadece ısı haritası/
+  // canlı bölge sayımı sessizce devre dışı kalsın (manuel sayıya düşülür).
+  let densityGrid: DensityGridCell[] = [];
+  try {
+    const gridResult = await supabase.rpc('get_live_density_grid', {
+      p_grid_cols: HEATMAP_GRID_COLS,
+      p_grid_rows: HEATMAP_GRID_ROWS,
+      p_live_window_seconds: Math.round(LIVE_WINDOW_MS / 1000),
+    });
+    if (!gridResult.error && Array.isArray(gridResult.data)) {
+      densityGrid = (gridResult.data as Row[]).map((row) => ({
+        cellX: Number(row.cell_x),
+        cellY: Number(row.cell_y),
+        count: Number(row.cnt),
+      }));
+    }
+  } catch {
+    // Sessizce yut — yukarıdaki yorumda açıklandığı gibi.
+  }
   const zoneRows = (zoneResult.data || []) as Row[];
   const zoneById = new Map(zoneRows.map((row, index) => [row.id, zoneCode(row, index)]));
   const stages: AdminStage[] = ((stageResult.data || []) as Row[]).map((row) => ({
@@ -369,31 +395,34 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
     } as AdminMeetingRecord;
   });
 
-  // Bölge merkezi tanımlanmışsa (center_lat/center_lng dolu), aktif kişi sayısı
-  // artık admin'in elle girdiği bir sayı değil, son LIVE_WINDOW_MS içindeki gerçek
-  // location_pings verisinden hesaplanan canlı bir değer. Merkezi tanımlanmamış
-  // bölgeler için eski davranış (manuel active_attendees) korunuyor.
-  const livePings = (livePingResult.data || []) as Row[];
-  const zoneCircles = zoneRows.map((row) => ({
-    id: row.id,
-    centerLat: row.center_lat != null ? Number(row.center_lat) : null,
-    centerLng: row.center_lng != null ? Number(row.center_lng) : null,
-    radiusMeters: Number(row.radius_meters || 60),
-  }));
-  const liveOccupancyByZone = computeLiveZoneOccupancy(
-    zoneCircles,
-    livePings.map((row) => ({
-      user_id: row.user_id,
-      lat: Number(row.lat),
-      lng: Number(row.lng),
-      timestamp: row.timestamp,
-    })),
-  );
+  // Etkinlik alanının TEK merkezi tanımlanmışsa (event_settings.venue_center_lat/
+  // lng dolu), her zone'un aktif kişi sayısı artık admin'in elle girdiği bir
+  // sayı değil, `densityGrid`'den (bkz. yukarısı) hesaplanan canlı bir değer:
+  // her ısı haritası hücresinin krokideki merkez yüzdesi `zoneForPercent` ile
+  // hangi zone'a (A/B/C/D) düştüğü bulunup o zone'un sayacına eklenir. Merkez
+  // tanımlanmamışsa (ya da RPC migration'ı henüz çalıştırılmadıysa) eski
+  // davranış (manuel active_attendees) korunuyor.
+  const venueSettingsRow = ((settingsResult.data || []) as Row[])[0];
+  const hasVenueCenter = venueSettingsRow?.venue_center_lat != null && venueSettingsRow?.venue_center_lng != null;
+  const zoneIdByCode = new Map<string, string>();
+  zoneRows.forEach((row, index) => zoneIdByCode.set(zoneCode(row, index) as string, row.id));
+  const liveOccupancyByZone = new Map<string, number>();
+  if (hasVenueCenter && densityGrid.length) {
+    const stepX = 100 / HEATMAP_GRID_COLS;
+    const stepY = 100 / HEATMAP_GRID_ROWS;
+    densityGrid.forEach((cell) => {
+      const cx = (cell.cellX + 0.5) * stepX;
+      const cy = (cell.cellY + 0.5) * stepY;
+      const code = zoneForPercent(cx, cy);
+      const zoneId = zoneIdByCode.get(code as string);
+      if (!zoneId) return;
+      liveOccupancyByZone.set(zoneId, (liveOccupancyByZone.get(zoneId) || 0) + cell.count);
+    });
+  }
 
   const zones: ZoneDensityInfo[] = zoneRows.map((row, index) => {
     const capacity = Number(row.capacity || 0);
-    const hasGeofence = row.center_lat != null && row.center_lng != null;
-    const active = hasGeofence ? liveOccupancyByZone.get(row.id) || 0 : Number(row.active_attendees || 0);
+    const active = hasVenueCenter ? liveOccupancyByZone.get(row.id) || 0 : Number(row.active_attendees || 0);
     const percent = capacity > 0 ? Math.round((active / capacity) * 100) : 0;
     return {
       id: row.id,
@@ -407,9 +436,6 @@ export async function fetchAdminWorkspace(): Promise<AdminWorkspaceData> {
       avgAttendees: Number(row.avg_attendees || 0),
       description: row.description || '',
       color: row.color || '#0F766E',
-      centerLat: row.center_lat != null ? Number(row.center_lat) : null,
-      centerLng: row.center_lng != null ? Number(row.center_lng) : null,
-      radiusMeters: Number(row.radius_meters || 60),
     };
   });
 
@@ -584,11 +610,13 @@ export const adminRepository = {
   },
 
   async saveZone(data: Partial<ZoneDensityInfo>, editingId?: string) {
+    // Zone artık kendi GPS merkez/yarıçapını tutmuyor — canlı yoğunluk TEK bir
+    // etkinlik-geneli merkezden (bkz. event_settings.venue_center_lat/lng,
+    // AdminMapManagement.tsx > VenueCenterModal) hesaplanıyor. center_lat/
+    // center_lng/radius_meters kolonları eski şemadan kalma, artık yazılmıyor
+    // (zararsız, kullanılmayan sütunlar).
     const payload: Row = {
       name: data.name || 'Yeni Bölge',
-      center_lat: data.centerLat ?? null,
-      center_lng: data.centerLng ?? null,
-      radius_meters: data.radiusMeters || 60,
       capacity: data.capacity || 0,
       description: data.description || null,
       updated_at: new Date().toISOString(),
@@ -799,6 +827,9 @@ export const adminRepository = {
       logo_url: settings.logoUrl || null,
       floor_plan_url: settings.floorPlanUrl || null,
       floor_plan_walls: settings.floorPlanWalls || [],
+      venue_center_lat: settings.venueCenterLat ?? null,
+      venue_center_lng: settings.venueCenterLng ?? null,
+      venue_radius_meters: settings.venueRadiusMeters || 150,
       opening_time: settings.openingTime,
       closing_time: settings.closingTime,
       location_tracking_start: settings.locationTrackingStart,

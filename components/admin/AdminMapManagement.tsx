@@ -13,10 +13,11 @@ import {
   Radio,
   Share2,
   Store,
+  Target,
   Trash2,
   X,
 } from 'lucide-react-native';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -32,7 +33,7 @@ import {
   type DimensionValue,
   type GestureResponderEvent,
 } from 'react-native';
-import { Line, Svg } from 'react-native-svg';
+import { Circle, Defs, Line, RadialGradient, Stop, Svg } from 'react-native-svg';
 
 import { colors } from '../../constants/theme';
 import {
@@ -55,7 +56,9 @@ import {
   snapToGrid,
 } from '../../lib/floorPlanGrid';
 import { buildKrokiHtml } from '../../lib/krokiExport';
+import { useLiveDensityGrid } from '../../lib/useLiveDensity';
 import { useCreateWaterStation, useUpdateWaterStationPosition, useWaterStations } from '../../lib/useWaterStations';
+import { densityColor, heatBlobsFromGrid } from '../../lib/zoneDensity';
 import type { AdminBooth, AdminStage, EventSettings, FloorPlanWall, ZoneDensityInfo } from '../../types/admin';
 
 // Yerleştirilmemiş bir stant/alanı krokiye ilk getirişte atanan varsayılan
@@ -296,10 +299,10 @@ function DraggablePin({
   );
 }
 
-// Bir bölgenin merkez GPS koordinatını ve yarıçapını (metre) düzenlemek için
-// kullanılan basit form. "Şu anki konumumu kullan" butonu, admin etkinlik
-// alanındayken cihazın gerçek konumunu otomatik dolduruyor — poligon köşe
-// noktası çizmek gibi bir harita aracına ihtiyaç kalmıyor.
+// Bir bölgenin adını düzenlemek için kullanılan basit form. Bölgenin GPS
+// konumu artık BURADA değil — tek bir etkinlik-geneli "Harita Merkezi"nden
+// geliyor (bkz. VenueCenterModal, aşağısı) — bkz. types/admin.ts >
+// EventSettings.venueCenterLat için gerekçe.
 function ZoneGeofenceModal({
   visible,
   zone,
@@ -314,62 +317,26 @@ function ZoneGeofenceModal({
   const saveZone = useAdminStore((state) => state.saveZone);
   const deleteZone = useAdminStore((state) => state.deleteZone);
   const [name, setName] = useState('');
-  const [lat, setLat] = useState('');
-  const [lng, setLng] = useState('');
-  const [radius, setRadius] = useState('60');
-  const [locating, setLocating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!visible) return;
     setName(zone?.name || '');
-    setLat(zone?.centerLat != null ? String(zone.centerLat) : '');
-    setLng(zone?.centerLng != null ? String(zone.centerLng) : '');
-    setRadius(zone ? String(zone.radiusMeters) : '60');
     setError(null);
   }, [visible, zone]);
-
-  async function handleUseCurrentLocation() {
-    setLocating(true);
-    setError(null);
-    try {
-      const permission = await Location.requestForegroundPermissionsAsync();
-      if (permission.status !== 'granted') {
-        setError('Konum izni verilmeden bu cihazın konumu alınamaz.');
-        return;
-      }
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      setLat(String(position.coords.latitude));
-      setLng(String(position.coords.longitude));
-    } catch (locationError) {
-      setError(locationError instanceof Error ? locationError.message : 'Konum alınamadı.');
-    } finally {
-      setLocating(false);
-    }
-  }
 
   async function handleSave() {
     if (!name.trim()) {
       setError('Bölge adı gerekli.');
       return;
     }
-    const parsedLat = lat.trim() ? Number(lat.replace(',', '.')) : null;
-    const parsedLng = lng.trim() ? Number(lng.replace(',', '.')) : null;
-    if ((parsedLat != null && Number.isNaN(parsedLat)) || (parsedLng != null && Number.isNaN(parsedLng))) {
-      setError('Enlem/boylam geçerli bir sayı olmalı.');
-      return;
-    }
-    const parsedRadius = Number(radius.replace(',', '.')) || 60;
 
     setSaving(true);
     setError(null);
     const ok = await saveZone(
       {
         name: name.trim(),
-        centerLat: parsedLat,
-        centerLng: parsedLng,
-        radiusMeters: parsedRadius,
         capacity: zone?.capacity,
         description: zone?.description,
       },
@@ -422,6 +389,149 @@ function ZoneGeofenceModal({
               />
             </View>
 
+            <Text style={modalStyles.hint}>
+              Bu bölgenin canlı kişi sayısı artık "Harita Merkezi"nden (header'daki hedef ikonu)
+              hesaplanıyor — harita merkezi ayarlanmadıysa bu sayı manuel girilir.
+            </Text>
+
+            <View style={modalStyles.actions}>
+              {zone ? (
+                <Pressable style={modalStyles.deleteBtn} onPress={handleDelete} disabled={saving}>
+                  <Trash2 size={15} color={colors.danger} />
+                  <Text style={modalStyles.deleteBtnText}>Sil</Text>
+                </Pressable>
+              ) : null}
+              <Pressable style={modalStyles.saveBtn} onPress={handleSave} disabled={saving}>
+                {saving ? (
+                  <ActivityIndicator size="small" color={colors.white} />
+                ) : (
+                  <Text style={modalStyles.saveBtnText}>Kaydet</Text>
+                )}
+              </Pressable>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+// Etkinlik alanının GERÇEK DÜNYADAKİ tek merkez GPS noktasını + yoğunluk ısı
+// haritasının krokinin yarı genişliğine karşılık geldiği yarıçapı (metre)
+// düzenler. Etkinlik alanı her etkinlikte değiştiği için admin bunu istediği
+// zaman güncelleyebiliyor — "Şu anki konumumu kullan" ile bulunduğu yerden de
+// ayarlayabiliyor (ZoneGeofenceModal'daki eski per-zone "Şu anki konumumu
+// kullan" ile birebir aynı desen, artık TEK bir merkez için). Bu merkez
+// (bkz. lib/useLiveDensity.ts, supabase_venue_center_migration.sql >
+// get_live_density_grid) katılımcılardan gelen canlı konum ping'lerinin
+// krokideki yaklaşık x/y'sini hesaplayıp ısı haritasını ve zone bazlı canlı
+// kişi sayısını besliyor.
+function VenueCenterModal({
+  visible,
+  settings,
+  onClose,
+  onNotify,
+}: {
+  visible: boolean;
+  settings: EventSettings;
+  onClose: () => void;
+  onNotify?: (message: string) => void;
+}) {
+  const saveSettings = useAdminStore((state) => state.saveSettings);
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
+  const [radius, setRadius] = useState('150');
+  const [locating, setLocating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    setLat(settings.venueCenterLat != null ? String(settings.venueCenterLat) : '');
+    setLng(settings.venueCenterLng != null ? String(settings.venueCenterLng) : '');
+    setRadius(String(settings.venueRadiusMeters || 150));
+    setError(null);
+  }, [visible, settings]);
+
+  async function handleUseCurrentLocation() {
+    setLocating(true);
+    setError(null);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setError('Konum izni verilmeden bu cihazın konumu alınamaz.');
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      setLat(String(position.coords.latitude));
+      setLng(String(position.coords.longitude));
+    } catch (locationError) {
+      setError(locationError instanceof Error ? locationError.message : 'Konum alınamadı.');
+    } finally {
+      setLocating(false);
+    }
+  }
+
+  async function handleSave() {
+    const parsedLat = lat.trim() ? Number(lat.replace(',', '.')) : null;
+    const parsedLng = lng.trim() ? Number(lng.replace(',', '.')) : null;
+    if ((parsedLat != null && Number.isNaN(parsedLat)) || (parsedLng != null && Number.isNaN(parsedLng))) {
+      setError('Enlem/boylam geçerli bir sayı olmalı.');
+      return;
+    }
+    const parsedRadius = Number(radius.replace(',', '.')) || 150;
+
+    setSaving(true);
+    setError(null);
+    const ok = await saveSettings({
+      venueCenterLat: parsedLat,
+      venueCenterLng: parsedLng,
+      venueRadiusMeters: parsedRadius,
+    });
+    setSaving(false);
+    if (ok) {
+      onNotify?.('Harita merkezi güncellendi.');
+      onClose();
+    } else {
+      setError('Harita merkezi kaydedilemedi. Bağlantını kontrol edip tekrar dene.');
+    }
+  }
+
+  async function handleClear() {
+    setSaving(true);
+    setError(null);
+    const ok = await saveSettings({ venueCenterLat: null, venueCenterLng: null });
+    setSaving(false);
+    if (ok) {
+      setLat('');
+      setLng('');
+      onNotify?.('Harita merkezi kaldırıldı — yoğunluk ısı haritası gizlendi.');
+      onClose();
+    } else {
+      setError('İşlem başarısız oldu.');
+    }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={modalStyles.overlay}>
+        <View style={modalStyles.card}>
+          <View style={modalStyles.header}>
+            <Text style={modalStyles.title}>Harita Merkezi</Text>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <X size={20} color={colors.textMuted} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={modalStyles.form}>
+            {error ? <Text style={modalStyles.errorText}>{error}</Text> : null}
+            <Text style={modalStyles.hint}>
+              Etkinlik alanının gerçek dünyadaki tek merkez noktası — katılımcılardan gelen canlı
+              konumlar buraya olan uzaklığına göre krokideki yoğunluk ısı haritasına (kırmızı =
+              yoğun, yeşil = az yoğun) dönüştürülür. Etkinlik alanı değiştiğinde bu noktayı
+              güncelleyin.
+            </Text>
+
             <View style={modalStyles.row}>
               <View style={[modalStyles.field, { flex: 1 }]}>
                 <Text style={modalStyles.label}>Enlem (lat)</Text>
@@ -463,20 +573,20 @@ function ZoneGeofenceModal({
                 value={radius}
                 onChangeText={setRadius}
                 keyboardType="numbers-and-punctuation"
-                placeholder="60"
+                placeholder="150"
                 placeholderTextColor={colors.textFaint}
               />
               <Text style={modalStyles.hint}>
-                Bu yarıçap içindeki konum ping'leri bu bölgede sayılır. Merkez boşsa bölge haritada
-                tanımlanmamış kabul edilir ve kişi sayısı manuel girilir.
+                Bu yarıçap, krokinin merkezden kenarına kadar olan gerçek mesafeyi (metre) temsil
+                eder — etkinlik alanı büyükse artırın, küçükse azaltın.
               </Text>
             </View>
 
             <View style={modalStyles.actions}>
-              {zone ? (
-                <Pressable style={modalStyles.deleteBtn} onPress={handleDelete} disabled={saving}>
-                  <Trash2 size={15} color={colors.danger} />
-                  <Text style={modalStyles.deleteBtnText}>Sil</Text>
+              {settings.venueCenterLat != null ? (
+                <Pressable style={modalStyles.deleteBtn} onPress={handleClear} disabled={saving}>
+                  <X size={15} color={colors.danger} />
+                  <Text style={modalStyles.deleteBtnText}>Kaldır</Text>
                 </Pressable>
               ) : null}
               <Pressable style={modalStyles.saveBtn} onPress={handleSave} disabled={saving}>
@@ -523,6 +633,14 @@ export function AdminMapManagement({
   // sekmesinde.
   const createWaterStation = useCreateWaterStation();
   const updateWaterStationPosition = useUpdateWaterStationPosition();
+  // Yoğunluk ısı haritası: harita merkezi ayarlandıysa (bkz.
+  // settings.venueCenterLat, VenueCenterModal), canlı konum ping'lerinden
+  // özetlenmiş ızgara hücreleri 20 saniyede bir yenileniyor (bkz.
+  // lib/useLiveDensity.ts) — krokide kırmızı (yoğun) - yeşil (az yoğun) bir
+  // ısı lekesi olarak gösteriliyor (bkz. renderMapCardBody).
+  const { data: densityCells = [] } = useLiveDensityGrid();
+  const heatBlobs = useMemo(() => heatBlobsFromGrid(densityCells), [densityCells]);
+  const [venueCenterModalVisible, setVenueCenterModalVisible] = useState(false);
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
     booths: true,
     stages: true,
@@ -979,6 +1097,25 @@ export function AdminMapManagement({
 
         <DensityLegend />
 
+        {settings.venueCenterLat != null ? (
+          <View style={styles.legendRow}>
+            <Text style={styles.legendLabel}>Yoğunluk Isı Haritası:</Text>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendSwatch, { backgroundColor: '#22c55e' }]} />
+              <Text style={styles.legendItemText}>Az yoğun</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendSwatch, { backgroundColor: '#ef4444' }]} />
+              <Text style={styles.legendItemText}>Yoğun</Text>
+            </View>
+          </View>
+        ) : (
+          <Text style={styles.uploadHintText}>
+            Yoğunluk ısı haritası için üstteki "Harita Merkezini Ayarla" ile etkinlik alanının
+            gerçek konumunu belirleyin.
+          </Text>
+        )}
+
         <View
           accessibilityLabel="Etkinlik alan krokisi"
           onLayout={(event) =>
@@ -1017,6 +1154,33 @@ export function AdminMapManagement({
               />
             ))}
           </Svg>
+
+          {/* Yoğunluk ısı haritası — harita merkezi ayarlandıysa (bkz.
+              settings.venueCenterLat, VenueCenterModal) canlı konum
+              ping'lerinden özetlenmiş hücreler (bkz. heatBlobs) her biri
+              yarı saydam, kırmızı(yoğun)-yeşil(az yoğun) bir radyal gradyan
+              olarak çiziliyor. Üst üste binen daireler doğal olarak
+              birbirine karışıp TEK bir yumuşak leke gibi görünüyor — ayrı
+              ızgara hücreleri belli olmuyor. Merkez ayarlanmadıysa hiç
+              render edilmiyor. */}
+          {settings.venueCenterLat != null && heatBlobs.length ? (
+            <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+              <Defs>
+                {heatBlobs.map((blob, index) => {
+                  const color = densityColor(blob.intensity);
+                  return (
+                    <RadialGradient key={`heat-grad-${index}`} id={`heatGrad-${index}`} cx="50%" cy="50%" r="50%">
+                      <Stop offset="0%" stopColor={color} stopOpacity={0.55} />
+                      <Stop offset="100%" stopColor={color} stopOpacity={0} />
+                    </RadialGradient>
+                  );
+                })}
+              </Defs>
+              {heatBlobs.map((blob, index) => (
+                <Circle key={`heat-${index}`} cx={blob.x} cy={blob.y} r={11} fill={`url(#heatGrad-${index})`} />
+              ))}
+            </Svg>
+          ) : null}
 
           {!displayWalls.length && !wallDrawing ? (
             <View pointerEvents="none" style={styles.uploadHint}>
@@ -1330,6 +1494,20 @@ export function AdminMapManagement({
               <Text style={styles.uploadBtnText}>Su Sebili Ekle ({waterStations.length})</Text>
             </Pressable>
             <Pressable
+              style={[styles.uploadBtn, settings.venueCenterLat != null && styles.wallToolBtnActive]}
+              onPress={() => setVenueCenterModalVisible(true)}
+            >
+              <Target
+                size={14}
+                color={settings.venueCenterLat != null ? colors.white : colors.primary}
+              />
+              <Text
+                style={[styles.uploadBtnText, settings.venueCenterLat != null && styles.wallToolBtnTextActive]}
+              >
+                {settings.venueCenterLat != null ? 'Harita Merkezi Ayarlı' : 'Harita Merkezini Ayarla'}
+              </Text>
+            </Pressable>
+            <Pressable
               style={[styles.uploadBtn, pendingPositionCount === 0 && styles.uploadBtnDisabled]}
               onPress={() => void saveAllPositions()}
               disabled={savingPositions || pendingPositionCount === 0}
@@ -1561,7 +1739,6 @@ export function AdminMapManagement({
             <View style={styles.summaryList}>
               {zones.map((zone) => {
                 const density = DENSITY_STYLES[zone.densityLevel];
-                const hasGeofence = zone.centerLat != null && zone.centerLng != null;
                 return (
                   <View key={zone.id} style={styles.summaryRow}>
                     <View
@@ -1576,9 +1753,7 @@ export function AdminMapManagement({
                         {zoneSubtitle(zone)}
                       </Text>
                       <Text style={styles.summaryGeofence} numberOfLines={1}>
-                        {hasGeofence
-                          ? `${zone.centerLat?.toFixed(4)}, ${zone.centerLng?.toFixed(4)} · ${zone.radiusMeters}m`
-                          : 'Konum tanımlanmamış'}
+                        {settings.venueCenterLat != null ? 'Canlı (harita merkezine göre)' : 'Manuel giriş'}
                       </Text>
                     </View>
                     <View style={styles.summaryValue}>
@@ -1622,6 +1797,13 @@ export function AdminMapManagement({
         visible={zoneModalVisible}
         zone={editingZone}
         onClose={() => setZoneModalVisible(false)}
+        onNotify={onNotify}
+      />
+
+      <VenueCenterModal
+        visible={venueCenterModalVisible}
+        settings={settings}
+        onClose={() => setVenueCenterModalVisible(false)}
         onNotify={onNotify}
       />
 

@@ -52,7 +52,11 @@ export default function PrivacyScreen() {
           setLocationSharing(true);
           showToast(t('privacyScreen.toggleOn'));
         } else if (result === 'foreground-only') {
-          setLocationSharing(false);
+          // Arka plan izni verilmedi ama takip YİNE DE başlatıldı (sadece
+          // uygulama ön plandayken) — bkz. lib/locationTracking.ts. Anahtar
+          // artık AÇIK gösteriliyor, kullanıcıya sadece kapsamın ön planla
+          // sınırlı olduğu bilgi amaçlı iletiliyor.
+          setLocationSharing(true);
           showToast(t('privacyScreen.permissionForegroundOnly'));
         } else {
           setLocationSharing(false);

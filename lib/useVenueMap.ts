@@ -28,6 +28,11 @@ export type VenueMapData = {
   // Admin'in krokiye elle çizdiği duvar çizgileri — rota bulma (bkz.
   // lib/routePlanner.ts) bunları da birer engel sayıyor.
   floorPlanWalls: FloorPlanWall[];
+  // Etkinlik alanının tek merkez GPS noktası — admin ayarlamadıysa null, bu
+  // durumda katılımcı haritasında yoğunluk ısı haritası GÖSTERİLMEZ (bkz.
+  // app/(tabs)/map.tsx, lib/useLiveDensity.ts).
+  venueCenterLat: number | null;
+  venueCenterLng: number | null;
 };
 
 function mapBoothRow(row: Row): AdminBooth {
@@ -93,8 +98,10 @@ async function fetchVenueMap(): Promise<VenueMapData> {
   const settingsRow = (settingsResult.data || [])[0] as Row | undefined;
   const floorPlanUrl = settingsRow?.floor_plan_url || undefined;
   const floorPlanWalls = (Array.isArray(settingsRow?.floor_plan_walls) ? settingsRow!.floor_plan_walls : []) as FloorPlanWall[];
+  const venueCenterLat = settingsRow?.venue_center_lat != null ? Number(settingsRow.venue_center_lat) : null;
+  const venueCenterLng = settingsRow?.venue_center_lng != null ? Number(settingsRow.venue_center_lng) : null;
 
-  return { booths, stages, floorPlanUrl, floorPlanWalls };
+  return { booths, stages, floorPlanUrl, floorPlanWalls, venueCenterLat, venueCenterLng };
 }
 
 export function useVenueMap() {

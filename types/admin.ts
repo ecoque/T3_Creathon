@@ -157,12 +157,6 @@ export interface ZoneDensityInfo {
   avgAttendees: number;
   description: string;
   color: string;
-  // Bölgenin gerçek dünyadaki konumu: merkez GPS noktası + metre cinsinden yarıçap.
-  // İkisi de null ise bölge henüz haritada tanımlanmamış demektir; bu durumda
-  // activeAttendees, location_pings'ten değil admin tarafından girilen sayıdan gelir.
-  centerLat: number | null;
-  centerLng: number | null;
-  radiusMeters: number;
 }
 
 // 'Görevli' (staff) is admin-assigned only — it never appears in the
@@ -255,6 +249,22 @@ export interface EventSettings {
   floorPlanUrl?: string;
   // Krokiye admin tarafından elle çizilmiş duvar çizgileri — bkz. FloorPlanWall.
   floorPlanWalls: FloorPlanWall[];
+  // Etkinlik alanının GERÇEK DÜNYADAKİ tek merkez GPS noktası + bu merkezin
+  // krokinin yarı genişliği/yüksekliğine karşılık geldiği metre cinsinden
+  // yarıçap. Etkinlik alanı her etkinlikte değişebildiği için admin bunu
+  // Harita Yönetimi ekranından istediği zaman güncelleyebiliyor (elle girerek
+  // ya da "Şu anki konumumu kullan" ile) — bkz. AdminMapManagement.tsx >
+  // VenueCenterModal. İkisi de null ise merkez tanımlanmamış demektir; bu
+  // durumda yoğunluk haritası gösterilmez ve bölge (zone) bazlı canlı kişi
+  // sayısı, admin'in elle girdiği sayıya geri düşer (bkz.
+  // lib/adminRepository.ts > fetchAdminWorkspace). Önceden her zone'un KENDİ
+  // merkez/yarıçapı vardı (bkz. eski supabase_zone_geofence_migration.sql) —
+  // admin için 4 ayrı GPS kurulumu gerektiriyordu; artık TEK bir merkez
+  // yeterli, zone (A/B/C/D) ataması zaten krokideki çeyreğe göre otomatik
+  // belirleniyor (bkz. lib/boothGrid.ts > zoneForPercent).
+  venueCenterLat: number | null;
+  venueCenterLng: number | null;
+  venueRadiusMeters: number;
   startDate?: string;
   endDate?: string;
   logoUrl?: string;

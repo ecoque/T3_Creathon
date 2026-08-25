@@ -283,7 +283,7 @@
     "deleted": "Location history cleared.",
     "deleteError": "Something went wrong while deleting your location history, please try again.",
     "permissionDenied": "This feature can't be turned on without location permission. You can grant it to TakeOff from your device Settings.",
-    "permissionForegroundOnly": "Your location will only be shared while the app is open. To share it during the event even when the app is closed, choose 'Always Allow' from Settings."
+    "permissionForegroundOnly": "Location sharing is active — but only while the app is open. To share it during the event even when the app is closed, choose 'Always Allow' from Settings."
   },
   "home": {
     "title": "My Agenda",

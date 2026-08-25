@@ -12,7 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Circle, Line, Polyline, Svg } from 'react-native-svg';
+import { Circle, Defs, Line, Polyline, RadialGradient, Stop, Svg } from 'react-native-svg';
 
 import { AppHeader } from '../../components/AppHeader';
 import { NotificationsModal } from '../../components/modals/NotificationsModal';
@@ -21,11 +21,13 @@ import { isStaffRole } from '../../constants/roles';
 import { colors } from '../../constants/theme';
 import { ZONE_COLORS, ZONE_LETTER, ZONE_ORDER, isBoothPlaced, isStagePlaced, zoneQuadrant } from '../../lib/boothGrid';
 import { ENTRANCE_GATE_COLOR, ENTRANCE_GATE_LABEL, ENTRANCE_GATE_LINE, FLOOR_PLAN_ASPECT_RATIO } from '../../lib/floorPlanGrid';
+import { useLiveDensityGrid } from '../../lib/useLiveDensity';
 import { DEFAULT_WALL_THICKNESS, findRoute, type RouteObstacle, type RoutePoint } from '../../lib/routePlanner';
 import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useIsAdmin } from '../../lib/useIsAdmin';
 import { useVenueMap } from '../../lib/useVenueMap';
 import { WATER_STATION_STATUS_LABEL_KEY, useReportWaterStationEmpty, useWaterStations } from '../../lib/useWaterStations';
+import { densityColor, heatBlobsFromGrid } from '../../lib/zoneDensity';
 
 // Stant ve sahnelerin krokideki yaklaşık "ayak izi" — rota hesaplanırken bu
 // yarıçap kadar alan etraflarından dolanılıyor (bkz. lib/routePlanner.ts).
@@ -167,6 +169,12 @@ export default function MapScreen() {
   const { data: meResult } = useCurrentProfile();
   const { data, isLoading } = useVenueMap();
   const { data: waterStations = [] } = useWaterStations();
+  // Yoğunluk ısı haritası — admin bir "Harita Merkezi" ayarladıysa (bkz.
+  // data.venueCenterLat), krokide kırmızı(yoğun)-yeşil(az yoğun) bir katman
+  // olarak gösteriliyor. Ham konum/kimlik bilgisi hiçbir zaman istemciye
+  // gelmiyor, sadece özetlenmiş ızgara hücreleri (bkz. lib/useLiveDensity.ts).
+  const { data: densityCells = [] } = useLiveDensityGrid();
+  const heatBlobs = useMemo(() => heatBlobsFromGrid(densityCells), [densityCells]);
   const { data: isAdmin } = useIsAdmin();
   const isStaff = isStaffRole(meResult?.profile?.role);
   const canManageWater = isStaff || !!isAdmin;
@@ -334,6 +342,29 @@ export default function MapScreen() {
               <View style={styles.mapCanvas}>
                 <View pointerEvents="none" style={styles.centerDividerV} />
                 <View pointerEvents="none" style={styles.centerDividerH} />
+
+                {/* Yoğunluk ısı haritası — bkz. lib/zoneDensity.ts. Admin
+                    tarafındaki (AdminMapManagement.tsx) katmanla birebir
+                    aynı render mantığı: üst üste binen yarı saydam radyal
+                    gradyan daireler tek bir yumuşak leke gibi görünüyor. */}
+                {data?.venueCenterLat != null && heatBlobs.length ? (
+                  <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
+                    <Defs>
+                      {heatBlobs.map((blob, index) => {
+                        const color = densityColor(blob.intensity);
+                        return (
+                          <RadialGradient key={`heat-grad-${index}`} id={`heatGrad-${index}`} cx="50%" cy="50%" r="50%">
+                            <Stop offset="0%" stopColor={color} stopOpacity={0.55} />
+                            <Stop offset="100%" stopColor={color} stopOpacity={0} />
+                          </RadialGradient>
+                        );
+                      })}
+                    </Defs>
+                    {heatBlobs.map((blob, index) => (
+                      <Circle key={`heat-${index}`} cx={blob.x} cy={blob.y} r={11} fill={`url(#heatGrad-${index})`} />
+                    ))}
+                  </Svg>
+                ) : null}
 
                 {ZONE_ORDER.map((code) => {
                   const { right, bottom } = zoneQuadrant(code);

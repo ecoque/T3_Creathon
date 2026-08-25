@@ -283,7 +283,7 @@
     "deleted": "Konum geçmişi temizlendi.",
     "deleteError": "Konum geçmişi silinirken bir hata oluştu, tekrar dene.",
     "permissionDenied": "Konum izni verilmeden bu özellik açılamaz. Cihaz Ayarları'ndan TakeOff'a konum izni verebilirsin.",
-    "permissionForegroundOnly": "Sadece uygulama açıkken konum paylaşılacak. Etkinlik boyunca (uygulama kapalıyken de) paylaşım için Ayarlar'dan 'Her Zaman İzin Ver' seçmen gerekiyor."
+    "permissionForegroundOnly": "Konum paylaşımı aktif — ama sadece uygulama açıkken. Etkinlik boyunca (uygulama kapalıyken de) paylaşım için Ayarlar'dan 'Her Zaman İzin Ver' seçmen gerekiyor."
   },
   "home": {
     "title": "Ajandam",
