@@ -33,6 +33,9 @@ export type VenueMapData = {
   // app/(tabs)/map.tsx, lib/useLiveDensity.ts).
   venueCenterLat: number | null;
   venueCenterLng: number | null;
+  // "Şu anki Konumumu Kullan" (rota bulma > başlangıç) hesaplaması için
+  // gereken yarıçap — bkz. lib/zoneDensity.ts > gpsToMapPercent.
+  venueRadiusMeters: number;
 };
 
 function mapBoothRow(row: Row): AdminBooth {
@@ -100,8 +103,9 @@ async function fetchVenueMap(): Promise<VenueMapData> {
   const floorPlanWalls = (Array.isArray(settingsRow?.floor_plan_walls) ? settingsRow!.floor_plan_walls : []) as FloorPlanWall[];
   const venueCenterLat = settingsRow?.venue_center_lat != null ? Number(settingsRow.venue_center_lat) : null;
   const venueCenterLng = settingsRow?.venue_center_lng != null ? Number(settingsRow.venue_center_lng) : null;
+  const venueRadiusMeters = settingsRow?.venue_radius_meters ? Number(settingsRow.venue_radius_meters) : 150;
 
-  return { booths, stages, floorPlanUrl, floorPlanWalls, venueCenterLat, venueCenterLng };
+  return { booths, stages, floorPlanUrl, floorPlanWalls, venueCenterLat, venueCenterLng, venueRadiusMeters };
 }
 
 export function useVenueMap() {

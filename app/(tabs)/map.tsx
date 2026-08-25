@@ -1,6 +1,7 @@
+import * as Location from 'expo-location';
 import { useLocalSearchParams } from 'expo-router';
-import { Check, Droplet, MapPin, Navigation, Radio, Search, Store, X } from 'lucide-react-native';
-import { useEffect, useMemo, useState } from 'react';
+import { Check, Droplet, LocateFixed, MapPin, Navigation, Radio, Search, Store, X } from 'lucide-react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
@@ -19,7 +20,15 @@ import { NotificationsModal } from '../../components/modals/NotificationsModal';
 import { ZoomPanCanvas } from '../../components/ZoomPanCanvas';
 import { isStaffRole } from '../../constants/roles';
 import { colors } from '../../constants/theme';
-import { ZONE_COLORS, ZONE_LETTER, ZONE_ORDER, isBoothPlaced, isStagePlaced, zoneQuadrant } from '../../lib/boothGrid';
+import {
+  ZONE_COLORS,
+  ZONE_LETTER,
+  ZONE_ORDER,
+  isBoothPlaced,
+  isStagePlaced,
+  shortStageLabel,
+  zoneQuadrant,
+} from '../../lib/boothGrid';
 import { ENTRANCE_GATE_COLOR, ENTRANCE_GATE_LABEL, ENTRANCE_GATE_LINE, FLOOR_PLAN_ASPECT_RATIO } from '../../lib/floorPlanGrid';
 import { useLiveDensityGrid } from '../../lib/useLiveDensity';
 import { DEFAULT_WALL_THICKNESS, findRoute, type RouteObstacle, type RoutePoint } from '../../lib/routePlanner';
@@ -27,12 +36,16 @@ import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useIsAdmin } from '../../lib/useIsAdmin';
 import { useVenueMap } from '../../lib/useVenueMap';
 import { WATER_STATION_STATUS_LABEL_KEY, useReportWaterStationEmpty, useWaterStations } from '../../lib/useWaterStations';
-import { densityColor, heatBlobsFromGrid } from '../../lib/zoneDensity';
+import { densityColor, gpsToMapPercent, heatBlobsFromGrid } from '../../lib/zoneDensity';
 
 // Stant ve sahnelerin krokideki yaklaşık "ayak izi" — rota hesaplanırken bu
 // yarıçap kadar alan etraflarından dolanılıyor (bkz. lib/routePlanner.ts).
 const BOOTH_OBSTACLE_RADIUS = 4;
 const STAGE_OBSTACLE_RADIUS = 6;
+
+// Rota başlangıcı için gerçek bir stant/sahne key'i değil, kullanıcının o
+// anki GPS konumunu temsil eden özel bir anahtar — bkz. handleUseCurrentLocation.
+const CURRENT_LOCATION_KEY = 'current-location';
 
 type LocationEntry = {
   key: string;
@@ -75,12 +88,19 @@ function LocationPickerModal({
   onSelect,
   onClose,
   t,
+  onUseCurrentLocation,
+  locatingCurrent,
 }: {
   visible: boolean;
   locations: LocationEntry[];
   onSelect: (location: LocationEntry) => void;
   onClose: () => void;
   t: (key: string) => string;
+  // Sadece "Başlangıç" seçicisinden açıldığında (pickerFor === 'start')
+  // verilir — bitiş noktası için "şu anki konumum" anlamsız olduğundan bu
+  // satır sadece bu prop dolu olduğunda gösteriliyor.
+  onUseCurrentLocation?: () => void;
+  locatingCurrent?: boolean;
 }) {
   const [search, setSearch] = useState('');
 
@@ -121,6 +141,23 @@ function LocationPickerModal({
           </View>
 
           <ScrollView contentContainerStyle={pickerStyles.list}>
+            {onUseCurrentLocation ? (
+              <Pressable
+                style={pickerStyles.row}
+                onPress={onUseCurrentLocation}
+                disabled={locatingCurrent}
+              >
+                {locatingCurrent ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <LocateFixed size={16} color={colors.primary} />
+                )}
+                <View style={pickerStyles.rowCopy}>
+                  <Text style={pickerStyles.rowLabel}>{t('map.routeUseCurrentLocation')}</Text>
+                </View>
+              </Pressable>
+            ) : null}
+
             {!filtered.length ? <Text style={pickerStyles.empty}>{t('map.pickerEmpty')}</Text> : null}
 
             {booths.length ? (
@@ -181,13 +218,30 @@ export default function MapScreen() {
   const reportWaterEmpty = useReportWaterStationEmpty();
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [layers, setLayers] = useState({ booths: true, stages: true, water: true });
+  // "density" — kırmızı/yeşil yoğunluk gradyanı katmanı için isteğe bağlı bir
+  // açık/kapalı anahtarı (bkz. layerBar'daki "Yoğunluk" çipi). Diğer katman
+  // anahtarları gibi cihazda kalıcı değil, ekran her açıldığında varsayılan
+  // olarak AÇIK başlıyor.
+  const [layers, setLayers] = useState({ booths: true, stages: true, water: true, density: true });
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [routeStartKey, setRouteStartKey] = useState<string | null>(null);
   const [routeEndKey, setRouteEndKey] = useState<string | null>(null);
   const [routePoints, setRoutePoints] = useState<RoutePoint[] | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [pickerFor, setPickerFor] = useState<'start' | 'end' | null>(null);
+  // "Şu anki Konumumu Kullan" ile hesaplanan, krokideki yüzde (0-100)
+  // konumu — gerçek bir stant/sahne olmadığı için locationByKey'de karşılığı
+  // yok, ayrı tutuluyor (bkz. handleUseCurrentLocation, buildRoute).
+  const [currentLocationPoint, setCurrentLocationPoint] = useState<RoutePoint | null>(null);
+  const [locatingCurrent, setLocatingCurrent] = useState(false);
+  // "Şu anda buradasınız" kırmızı noktası — yukarıdaki `currentLocationPoint`
+  // ("Şu anki Konumumu Kullan" ile TEK seferlik okunan, rota başlangıcı için
+  // kullanılan nokta) ile KARIŞTIRILMAMALI: bu, kullanıcı harita ekranını
+  // açık tuttuğu sürece watchPositionAsync ile SÜREKLİ güncellenen, canlı bir
+  // konum göstergesi. Amaç sadece "şu an haritada neredeyim" bilgisini her
+  // zaman göstermek — rota hesaplamasına dahil değil, hiçbir yere kaydedilmiyor.
+  const [myLocationPoint, setMyLocationPoint] = useState<RoutePoint | null>(null);
+  const myLocationWatcherRef = useRef<Location.LocationSubscription | null>(null);
 
   const locations = useMemo<LocationEntry[]>(() => {
     if (!data) return [];
@@ -233,7 +287,53 @@ export default function MapScreen() {
     if (stage) setSelectedKey(`stage:${stage.id}`);
   }, [params.locationName, data]);
 
-  function toggleLayer(key: 'booths' | 'stages' | 'water') {
+  // Krokide "Şu anda buradasınız" kırmızı noktasını canlı tutan izleyici.
+  // Harita merkezi ayarlanmamışsa (data.venueCenterLat == null) GPS'i krokideki
+  // yüzde konuma çevirecek bir referans noktası yok, bu yüzden hiç
+  // başlatılmıyor. İzin reddedilirse sessizce vazgeçiliyor (bkz.
+  // handleUseCurrentLocation'daki gibi bir hata banner'ı GÖSTERİLMİYOR —
+  // bu, kullanıcının kendi isteğiyle tetiklediği bir aksiyon değil, ekran
+  // her açıldığında otomatik denenen pasif bir gösterge olduğu için ısrarcı
+  // bir hata mesajı rahatsız edici olurdu).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function startWatching() {
+      if (data?.venueCenterLat == null || data?.venueCenterLng == null) return;
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (cancelled || permission.status !== 'granted') return;
+
+      const subscription = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, timeInterval: 4000, distanceInterval: 3 },
+        (loc) => {
+          const point = gpsToMapPercent(
+            loc.coords.latitude,
+            loc.coords.longitude,
+            data.venueCenterLat as number,
+            data.venueCenterLng as number,
+            data.venueRadiusMeters || 150,
+          );
+          if (point) setMyLocationPoint(point);
+        },
+      );
+      if (cancelled) {
+        subscription.remove();
+        return;
+      }
+      myLocationWatcherRef.current = subscription;
+    }
+
+    void startWatching();
+
+    return () => {
+      cancelled = true;
+      myLocationWatcherRef.current?.remove();
+      myLocationWatcherRef.current = null;
+      setMyLocationPoint(null);
+    };
+  }, [data?.venueCenterLat, data?.venueCenterLng, data?.venueRadiusMeters]);
+
+  function toggleLayer(key: 'booths' | 'stages' | 'water' | 'density') {
     setLayers((current) => ({ ...current, [key]: !current[key] }));
   }
 
@@ -248,19 +348,66 @@ export default function MapScreen() {
     setRouteError(null);
   }
 
+  // "Şu anki Konumumu Kullan" — cihazın GPS'ini bir kereliğine okuyup
+  // admin'in ayarladığı TEK harita merkezine göre krokideki yüzde konumuna
+  // çeviriyor (bkz. lib/zoneDensity.ts > gpsToMapPercent). Isı haritasındaki
+  // sürekli arka plan takibinden (lib/locationTracking.ts) FARKLI ve
+  // bağımsız bir akış — burada sadece TEK seferlik, anlık bir konum lazım.
+  async function handleUseCurrentLocation() {
+    if (data?.venueCenterLat == null || data?.venueCenterLng == null) {
+      setRouteError(t('map.routeVenueCenterMissing'));
+      return;
+    }
+    setLocatingCurrent(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setRouteError(t('map.routeLocationPermissionDenied'));
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const point = gpsToMapPercent(
+        position.coords.latitude,
+        position.coords.longitude,
+        data.venueCenterLat,
+        data.venueCenterLng,
+        data.venueRadiusMeters || 150,
+      );
+      if (!point) {
+        setRouteError(t('map.routeLocationError'));
+        return;
+      }
+      setCurrentLocationPoint(point);
+      setRouteStartKey(CURRENT_LOCATION_KEY);
+      setRouteError(null);
+      setPickerFor(null);
+    } catch {
+      setRouteError(t('map.routeLocationError'));
+    } finally {
+      setLocatingCurrent(false);
+    }
+  }
+
   function buildRoute() {
-    const start = routeStartKey ? locationByKey.get(routeStartKey) : null;
-    const end = routeEndKey ? locationByKey.get(routeEndKey) : null;
-    if (!start || !end) {
+    const startEntry =
+      routeStartKey && routeStartKey !== CURRENT_LOCATION_KEY ? locationByKey.get(routeStartKey) : null;
+    const endEntry = routeEndKey ? locationByKey.get(routeEndKey) : null;
+    const startPoint: RoutePoint | null =
+      routeStartKey === CURRENT_LOCATION_KEY
+        ? currentLocationPoint
+        : startEntry
+          ? { x: startEntry.x, y: startEntry.y }
+          : null;
+    if (!startPoint || !endEntry) {
       setRouteError(t('map.routeMissingError'));
       return;
     }
-    if (start.key === end.key) {
+    if (routeStartKey === routeEndKey) {
       setRouteError(t('map.routeSameError'));
       return;
     }
     const boothStageObstacles: RouteObstacle[] = locations
-      .filter((item) => item.key !== start.key && item.key !== end.key)
+      .filter((item) => item.key !== routeStartKey && item.key !== routeEndKey)
       .map((item) => ({
         kind: 'circle',
         id: item.key,
@@ -280,11 +427,7 @@ export default function MapScreen() {
       y2: wall.y2,
       thickness: DEFAULT_WALL_THICKNESS,
     }));
-    const path = findRoute(
-      { x: start.x, y: start.y },
-      { x: end.x, y: end.y },
-      [...boothStageObstacles, ...wallObstacles],
-    );
+    const path = findRoute(startPoint, { x: endEntry.x, y: endEntry.y }, [...boothStageObstacles, ...wallObstacles]);
     if (!path) {
       setRoutePoints(null);
       setRouteError(t('map.routeNotFound'));
@@ -299,6 +442,7 @@ export default function MapScreen() {
     setRouteError(null);
     setRouteStartKey(null);
     setRouteEndKey(null);
+    setCurrentLocationPoint(null);
   }
 
   return (
@@ -330,6 +474,33 @@ export default function MapScreen() {
             label={`${t('map.layerWaterStations')} (${waterStations.length})`}
             onPress={() => toggleLayer('water')}
           />
+          {data?.venueCenterLat != null ? (
+            <LayerToggle
+              active={layers.density}
+              label={t('map.layerDensity')}
+              onPress={() => toggleLayer('density')}
+            />
+          ) : null}
+        </View>
+
+        {/* Pusula — krokinin "yukarısı" her zaman coğrafi kuzey, "sağı" doğu
+            kabul ediliyor (bkz. lib/zoneDensity.ts > gpsToMapPercent). Admin
+            Harita Yönetimi ekranındaki (AdminMapManagement.tsx) pusulayla
+            birebir aynı gerekçe ve görünüm — katılımcı ekranında da olsun
+            istendi ki kullanıcı krokiyi gerçek yönlerle eşleştirebilsin.
+            Kroki kartının (mapCard) kendisi burada kenardan kenara/padding'siz
+            olduğu için pusula kartın İÇİNE değil, hemen ÜSTÜNE, sağa yaslı
+            ayrı bir satıra kondu — admin'deki "haritanın dışında" yerleşimiyle
+            aynı fikir. Sadece görsel bir referans, hiçbir hesaplamaya dahil
+            değil. */}
+        <View style={styles.compassRow} pointerEvents="none">
+          <View style={styles.compassBadge}>
+            <View style={styles.compassNeedle} />
+            <Text style={[styles.compassLabel, styles.compassLabelTop]}>K</Text>
+            <Text style={[styles.compassLabel, styles.compassLabelBottom]}>G</Text>
+            <Text style={[styles.compassLabel, styles.compassLabelRight]}>D</Text>
+            <Text style={[styles.compassLabel, styles.compassLabelLeft]}>B</Text>
+          </View>
         </View>
 
         <View style={styles.mapCard}>
@@ -347,7 +518,7 @@ export default function MapScreen() {
                     tarafındaki (AdminMapManagement.tsx) katmanla birebir
                     aynı render mantığı: üst üste binen yarı saydam radyal
                     gradyan daireler tek bir yumuşak leke gibi görünüyor. */}
-                {data?.venueCenterLat != null && heatBlobs.length ? (
+                {layers.density && data?.venueCenterLat != null && heatBlobs.length ? (
                   <Svg pointerEvents="none" style={StyleSheet.absoluteFill} viewBox="0 0 100 100" preserveAspectRatio="none">
                     <Defs>
                       {heatBlobs.map((blob, index) => {
@@ -498,7 +669,7 @@ export default function MapScreen() {
                         >
                           <View style={styles.stagePulse} />
                           <Text style={styles.stagePinText} numberOfLines={1}>
-                            {stage.name}
+                            {shortStageLabel(stage.name)}
                           </Text>
                         </Pressable>
                       );
@@ -525,6 +696,26 @@ export default function MapScreen() {
                       );
                     })
                   : null}
+
+                {/* "Şu anda buradasınız" — kullanıcının kendi canlı GPS konumu
+                    (bkz. yukarıdaki useEffect > watchPositionAsync). Diğer
+                    tüm pin'lerin ÜSTÜNDE durması için en yüksek zIndex'e
+                    sahip; dokunulamaz (pointerEvents="none") çünkü seçilecek
+                    bir stant/sahne değil, sadece bir konum göstergesi. */}
+                {myLocationPoint ? (
+                  <View
+                    pointerEvents="none"
+                    style={[styles.myLocationPin, { left: `${myLocationPoint.x}%`, top: `${myLocationPoint.y}%` }]}
+                  >
+                    <View style={styles.myLocationLabelWrap}>
+                      <Text style={styles.myLocationLabelText}>{t('map.youAreHereLabel')}</Text>
+                    </View>
+                    <View style={styles.myLocationDotWrap}>
+                      <View style={styles.myLocationHalo} />
+                      <View style={styles.myLocationDot} />
+                    </View>
+                  </View>
+                ) : null}
               </View>
             </ZoomPanCanvas>
           )}
@@ -642,9 +833,11 @@ export default function MapScreen() {
             <View style={styles.routeSelectorCopy}>
               <Text style={styles.routeSelectorLabel}>{t('map.routeStart')}</Text>
               <Text style={styles.routeSelectorValue} numberOfLines={1}>
-                {routeStartKey
-                  ? locationByKey.get(routeStartKey)?.label
-                  : t('map.routeStartPlaceholder')}
+                {routeStartKey === CURRENT_LOCATION_KEY
+                  ? t('map.routeCurrentLocationLabel')
+                  : routeStartKey
+                    ? locationByKey.get(routeStartKey)?.label
+                    : t('map.routeStartPlaceholder')}
               </Text>
             </View>
           </Pressable>
@@ -683,6 +876,8 @@ export default function MapScreen() {
         onSelect={handlePickerSelect}
         onClose={() => setPickerFor(null)}
         t={t}
+        onUseCurrentLocation={pickerFor === 'start' ? handleUseCurrentLocation : undefined}
+        locatingCurrent={locatingCurrent}
       />
 
       <NotificationsModal visible={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
@@ -719,6 +914,37 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   checkboxActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  compassRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  compassBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surfaceMuted,
+  },
+  compassNeedle: {
+    position: 'absolute',
+    top: 4,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 4,
+    borderRightWidth: 4,
+    borderBottomWidth: 7,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: colors.primary,
+  },
+  compassLabel: { position: 'absolute', color: colors.text, fontSize: 9, fontWeight: '900' },
+  compassLabelTop: { top: 11, color: colors.primary },
+  compassLabelBottom: { bottom: 3, opacity: 0.6 },
+  compassLabelRight: { right: 4, opacity: 0.6 },
+  compassLabelLeft: { left: 4, opacity: 0.6 },
   mapCard: {
     borderRadius: 18,
     overflow: 'hidden',
@@ -846,6 +1072,47 @@ const styles = StyleSheet.create({
   },
   waterPinSelected: { transform: [{ translateX: -11 }, { translateY: -11 }, { scale: 1.15 }] },
   waterPinAlert: { backgroundColor: colors.danger },
+  // "Şu anda buradasınız" göstergesi — dikey konumlandırma flex-column akışına
+  // (etiket üstte, nokta altta) göre SABİT bir ofsetle ayarlandı (etiket
+  // yüksekliği + boşluk + nokta yarıçapı ≈ 31px) ki kırmızı NOKTANIN merkezi
+  // gerçek GPS konumuna denk gelsin, etiketin kendisi değil. Yatayda ise
+  // '-50%' yüzde transform'u (RN 0.71+ destekliyor) etiketin metin uzunluğu
+  // ne olursa olsun tüm bloğu (etiket + nokta) doğru şekilde ortalıyor.
+  myLocationPin: {
+    position: 'absolute',
+    zIndex: 6,
+    alignItems: 'center',
+    transform: [{ translateX: '-50%' }, { translateY: -31 }],
+  },
+  myLocationLabelWrap: {
+    marginBottom: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(15,23,42,0.92)',
+  },
+  myLocationLabelText: { color: colors.white, fontSize: 8, fontWeight: '900' },
+  myLocationDotWrap: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  myLocationHalo: {
+    position: 'absolute',
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(239,68,68,0.28)',
+  },
+  myLocationDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: colors.white,
+    backgroundColor: colors.danger,
+  },
   waterReportBtn: {
     marginTop: 8,
     minHeight: 40,

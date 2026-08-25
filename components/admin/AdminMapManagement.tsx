@@ -42,6 +42,7 @@ import {
   ZONE_ORDER,
   isBoothPlaced,
   isStagePlaced,
+  shortStageLabel,
   zoneForPercent,
   zoneQuadrant,
 } from '../../lib/boothGrid';
@@ -58,7 +59,7 @@ import {
 import { buildKrokiHtml } from '../../lib/krokiExport';
 import { useLiveDensityGrid } from '../../lib/useLiveDensity';
 import { useCreateWaterStation, useUpdateWaterStationPosition, useWaterStations } from '../../lib/useWaterStations';
-import { densityColor, heatBlobsFromGrid } from '../../lib/zoneDensity';
+import { densityColor, distanceFromVenueCenterMeters, heatBlobsFromGrid } from '../../lib/zoneDensity';
 import type { AdminBooth, AdminStage, EventSettings, FloorPlanWall, ZoneDensityInfo } from '../../types/admin';
 
 // Yerleştirilmemiş bir stant/alanı krokiye ilk getirişte atanan varsayılan
@@ -161,14 +162,8 @@ function zoneSubtitle(zone: ZoneDensityInfo) {
   return separator >= 0 ? zone.name.slice(separator + 3) : zone.name;
 }
 
-// Krokideki sahne/alan pin'i küçük tutulduğu için tam ad yerine kısaltılmış
-// bir etiket gösteriliyor (yer kaplamasın diye) — tam ad hâlâ Inspector
-// panelinde ve dokunulunca açılan detayda görünüyor, sadece pin üzerindeki
-// etiket kısalıyor.
-function shortStageLabel(name: string) {
-  const trimmed = name.trim();
-  return trimmed.length > 9 ? `${trimmed.slice(0, 8)}…` : trimmed;
-}
+// shortStageLabel artık lib/boothGrid.ts'de — katılımcı harita ekranıyla
+// (app/(tabs)/map.tsx) aynı kısaltma kuralını paylaşıyor, bkz. yukarıdaki import.
 
 function LayerToggle({
   active,
@@ -717,6 +712,17 @@ export function AdminMapManagement({
     const pending = pendingPositions[`stage:${stage.id}`];
     return pending ? { x: pending.x, y: pending.y } : { x: stage.mapX, y: stage.mapY };
   }
+  // Inspector panelindeki "Merkeze Uzaklık" satırı için — bkz.
+  // lib/zoneDensity.ts > distanceFromVenueCenterMeters. Harita merkezi
+  // ayarlıysa (çağıran taraf zaten `settings.venueCenterLat != null` ile
+  // kontrol ediyor) bu her zaman bir sayı döner; yine de `radiusMeters`
+  // geçersizse (0 veya tanımsız) fonksiyon `null` dönebildiği için bir
+  // metin fallback'i tutuluyor.
+  function formatDistanceFromCenter(position: { x: number; y: number }, radiusMeters: number) {
+    const meters = distanceFromVenueCenterMeters(position.x, position.y, radiusMeters);
+    if (meters == null) return 'Bilinmiyor';
+    return meters >= 1000 ? `~${(meters / 1000).toFixed(2)} km` : `~${Math.round(meters)} m`;
+  }
   // Inspector panelinde gösterilecek zone — henüz kaydedilmemiş ama taslakta
   // yerleştirilmiş bir öğe için zone, o taslak konumdan anlık hesaplanıyor
   // (persist edilmiş `booth.zone`/`stage.zone` henüz null olabilir).
@@ -1115,6 +1121,28 @@ export function AdminMapManagement({
             gerçek konumunu belirleyin.
           </Text>
         )}
+
+        {/* Pusula — krokinin "yukarısı" her zaman coğrafi kuzey, "sağı" doğu
+            kabul ediliyor (bkz. lib/zoneDensity.ts > gpsToMapPercent, yoğunluk
+            ısı haritası ve GPS-tabanlı mesafe hesapları bu varsayıma
+            dayanıyor). Krokinin gerçek pusula yönü FARKLIYSA (admin duvarları
+            o yöne göre çizmediyse) ısı haritası/mesafe hesapları hafif
+            yanıltıcı olabilir — bu widget admin'in bu varsayımı görüp
+            krokiyi ona göre çizmesini/yorumlamasını sağlıyor. Kullanıcının
+            "pusula haritanın dışında üstte sağ tarafta dursun" isteği üzerine
+            krokinin (SVG canvas'ının) İÇİNDEN çıkarılıp kroki kutusunun hemen
+            ÜSTÜNE, sağa yaslı ayrı bir satıra taşındı — artık kroki
+            çizimiyle hiç çakışmıyor. Sadece görsel bir referans, hiçbir
+            hesaplamaya dahil değil. */}
+        <View style={styles.compassRow} pointerEvents="none">
+          <View style={styles.compassBadge}>
+            <View style={styles.compassNeedle} />
+            <Text style={[styles.compassLabel, styles.compassLabelTop]}>K</Text>
+            <Text style={[styles.compassLabel, styles.compassLabelBottom]}>G</Text>
+            <Text style={[styles.compassLabel, styles.compassLabelRight]}>D</Text>
+            <Text style={[styles.compassLabel, styles.compassLabelLeft]}>B</Text>
+          </View>
+        </View>
 
         <View
           accessibilityLabel="Etkinlik alan krokisi"
@@ -1610,6 +1638,12 @@ export function AdminMapManagement({
                   label="Ziyaret & Check-in:"
                   value={`${selectedBooth.totalVisits.toLocaleString('tr-TR')} kişi`}
                 />
+                {settings.venueCenterLat != null && isBoothOnCanvas(selectedBooth) ? (
+                  <InfoLine
+                    label="Merkeze Uzaklık:"
+                    value={formatDistanceFromCenter(boothMapPosition(selectedBooth), settings.venueRadiusMeters)}
+                  />
+                ) : null}
               </View>
 
               {isBoothOnCanvas(selectedBooth) ? (
@@ -1689,6 +1723,12 @@ export function AdminMapManagement({
                   label="Durum:"
                   value={selectedStage.status === 'active' ? 'Aktif' : selectedStage.status}
                 />
+                {settings.venueCenterLat != null && isStageOnCanvas(selectedStage) ? (
+                  <InfoLine
+                    label="Merkeze Uzaklık:"
+                    value={formatDistanceFromCenter(stageMapPosition(selectedStage), settings.venueRadiusMeters)}
+                  />
+                ) : null}
               </View>
 
               {isStageOnCanvas(selectedStage) ? (
@@ -2042,6 +2082,38 @@ const styles = StyleSheet.create({
     backgroundColor: '#16a34a',
   },
   entranceLabelText: { color: colors.white, fontSize: 8, fontWeight: '900', letterSpacing: 0.4 },
+  compassRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginBottom: 8,
+  },
+  compassBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surfaceMuted,
+  },
+  compassNeedle: {
+    position: 'absolute',
+    top: 4,
+    width: 0,
+    height: 0,
+    borderLeftWidth: 4,
+    borderRightWidth: 4,
+    borderBottomWidth: 7,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: colors.primary,
+  },
+  compassLabel: { position: 'absolute', color: colors.text, fontSize: 9, fontWeight: '900' },
+  compassLabelTop: { top: 11, color: colors.primary },
+  compassLabelBottom: { bottom: 3, opacity: 0.6 },
+  compassLabelRight: { right: 4, opacity: 0.6 },
+  compassLabelLeft: { left: 4, opacity: 0.6 },
   waterPin: {
     position: 'absolute',
     zIndex: 3,

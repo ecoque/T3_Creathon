@@ -89,3 +89,15 @@ export const ZONE_COLORS: Record<AdminBooth['zone'] & string, string> = {
   'Zone C': '#34d399',
   'Zone D': '#c084fc',
 };
+
+// Krokideki minik pin'lerin üzerinde uzun bir sahne/oturum adı ("Girişimcilik
+// Ekosistemi Paneli: Yatırımcılarla Buluşma" gibi) yer sıkışıklığına ve
+// okunaksız bir görünüme yol açıyordu. Admin Harita Yönetimi ekranı (bkz.
+// AdminMapManagement.tsx) ve katılımcı harita ekranı (bkz. app/(tabs)/map.tsx)
+// AYNI kısaltma kuralını kullanır ki iki ekran görsel olarak tutarlı olsun.
+// Tam isim zaten arama listesinde, detay panelinde ve dokunulunca açılan
+// detayda görünüyor, sadece pin üzerindeki etiket kısalıyor.
+export function shortStageLabel(name: string) {
+  const trimmed = name.trim();
+  return trimmed.length > 9 ? `${trimmed.slice(0, 8)}…` : trimmed;
+}

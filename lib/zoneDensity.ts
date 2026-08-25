@@ -105,3 +105,55 @@ export function densityColor(intensity: number): string {
   ];
   return `rgb(${r}, ${g}, ${b})`;
 }
+
+// GPS koordinatını, TEK etkinlik merkezine göre krokideki yüzde (0-100)
+// konumuna çevirir — `get_live_density_grid` RPC'sindeki (bkz.
+// supabase_venue_center_migration.sql) equirectangular projeksiyonun
+// istemci tarafındaki birebir aynısı. SADECE kullanıcının KENDİ cihaz
+// GPS'i için kullanılır (örn. "Rota Bul" ekranında "Şu anki Konumumu
+// Kullan" — bkz. app/(tabs)/map.tsx) — başka kullanıcıların ham konumu bu
+// şekilde hiçbir zaman istemciye gelmiyor (RLS + SECURITY DEFINER RPC
+// gereği, bkz. yukarısı), bu yüzden bunu istemci tarafında hesaplamak bir
+// gizlilik ihlali değil.
+export function gpsToMapPercent(
+  lat: number,
+  lng: number,
+  centerLat: number,
+  centerLng: number,
+  radiusMeters: number,
+): { x: number; y: number } | null {
+  if (!radiusMeters || radiusMeters <= 0) return null;
+  const metersPerDegree = 111320;
+  // Kuzey (lat artışı) krokide YUKARI (küçük y) demek.
+  const yPct = 50 - ((lat - centerLat) * metersPerDegree) / radiusMeters * 50;
+  // Doğu (lng artışı) krokide SAĞA (büyük x) demek.
+  const xPct =
+    50 + ((lng - centerLng) * metersPerDegree * Math.cos((centerLat * Math.PI) / 180)) / radiusMeters * 50;
+  return {
+    x: Math.max(0, Math.min(100, xPct)),
+    y: Math.max(0, Math.min(100, yPct)),
+  };
+}
+
+// gpsToMapPercent'in geometrik tersi — bir stant/sahnenin krokideki yüzde
+// konumu (mapX, mapY) ile etkinlik merkezi (her zaman 50,50) arasındaki
+// GERÇEK dünya mesafesini metre cinsinden verir. Stantların kendi gerçek
+// GPS koordinatı hiç tutulmuyor (sadece kroki üzerindeki yüzde konumu var),
+// ama buna ihtiyaç da yok: gpsToMapPercent'teki projeksiyon, merkezden 50
+// yüzde puanlık bir ofsetin HER ZAMAN `radiusMeters` metreye karşılık
+// geldiğini varsayıyor (x ve y ekseninde aynı ölçek) — o yüzden ters yönde
+// de aynı sabit oranla (yüzde ofseti / 50 * radiusMeters) doğrudan
+// hesaplanabiliyor, merkezin gerçek lat/lng'sine bile ihtiyaç yok. Admin
+// panelindeki "Merkeze Uzaklık" bilgisi (bkz. AdminMapManagement.tsx) bunu
+// kullanıyor.
+export function distanceFromVenueCenterMeters(
+  mapX: number,
+  mapY: number,
+  radiusMeters: number,
+): number | null {
+  if (!radiusMeters || radiusMeters <= 0) return null;
+  const dxPct = mapX - 50;
+  const dyPct = mapY - 50;
+  const pctDistance = Math.sqrt(dxPct * dxPct + dyPct * dyPct);
+  return (pctDistance / 50) * radiusMeters;
+}

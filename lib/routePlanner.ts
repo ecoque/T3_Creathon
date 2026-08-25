@@ -47,6 +47,25 @@ export type RouteObstacle = RouteCircleObstacle | RouteWallObstacle;
 // — ince bir bölme duvarını gerçekçi biçimde temsil eden makul bir değer.
 export const DEFAULT_WALL_THICKNESS = 2;
 
+// Rota, engellerin (stant/sahne/duvar) TAM kenarına yapışık çizilmesin diye
+// eklenen ekstra pay — kullanıcının "duvarın dibinden ani dönüşler oluyor"
+// şikayetinin kök nedeni buydu: yol, engelin gerçek sınırına kadar sıkışık
+// gidip TAM o noktada keskin bir açıyla dönüyordu. Bu pay, yolu engellerden
+// biraz daha uzakta tutarak hem daha doğal görünmesini sağlıyor hem de
+// aşağıdaki köşe yuvarlama işlemine (bkz. roundCorners) güvenli bir alan
+// bırakıyor. Varsayılan ızgara hücresi ~1.1-1.7 birim olduğu için 1.4 birim
+// yaklaşık bir hücrelik ek boşluk demek — çok dar geçitleri tıkayacak kadar
+// büyük değil.
+export const DEFAULT_ROUTE_CLEARANCE = 1.4;
+
+function inflateObstacle(obstacle: RouteObstacle, clearance: number): RouteObstacle {
+  if (clearance <= 0) return obstacle;
+  if (obstacle.kind === 'circle') {
+    return { ...obstacle, radius: obstacle.radius + clearance };
+  }
+  return { ...obstacle, thickness: obstacle.thickness + clearance * 2 };
+}
+
 const DEFAULT_COLS = 90;
 const DEFAULT_ROWS = 60;
 
@@ -315,6 +334,53 @@ function simplifyPath(points: RoutePoint[], obstacles: RouteObstacle[]) {
   return result;
 }
 
+// Her köşede kesilen kenar oranı (0-0.5 arası) — 0.28, art arda gelen iki
+// köşe aynı kenarı paylaşsa bile (kesim < 0.5 olduğu sürece) kesimlerin
+// birbirine çakışmayacağını garanti eden güvenli bir değer.
+const CORNER_CUT_RATIO = 0.28;
+// Her köşedeki kavis için örneklenen ara nokta sayısı — ne kadar fazlaysa
+// çizgi o kadar pürüzsüz görünür, SVG Polyline için 6 nokta yeterince
+// yumuşak bir görünüm veriyor.
+const CORNER_SAMPLES = 6;
+
+function lerp(a: RoutePoint, b: RoutePoint, t: number): RoutePoint {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+function quadraticBezier(p0: RoutePoint, p1: RoutePoint, p2: RoutePoint, t: number): RoutePoint {
+  const a = lerp(p0, p1, t);
+  const b = lerp(p1, p2, t);
+  return lerp(a, b, t);
+}
+
+// simplifyPath'ten gelen köşeli çizgiyi, her ara noktada (başlangıç/bitiş
+// hariç) kenarların bir kısmını kesip yerine kuadratik bir Bezier kavisi
+// yerleştirerek yumuşatır — "duvarın dibinden ani dönüş" hissini ortadan
+// kaldırıp daha doğal, insan yürüyüşüne benzer bir çizgi üretir. Sadece
+// GÖRSEL bir son işlem: hangi hücrelerden geçileceğine dair karar zaten
+// verilmiş durumda, bu fonksiyon sadece o kararı daha yumuşak bir eğriye
+// çeviriyor. Çok kısa kenarlarda kesim oranı orantılı küçüldüğü için
+// (fraction sabit kalsa da mesafe kısaldığı için) dejenere/aşırı kıvrımlı
+// bir sonuç oluşmaz.
+function roundCorners(points: RoutePoint[]): RoutePoint[] {
+  if (points.length <= 2) return points;
+  const result: RoutePoint[] = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+    const enter = lerp(prev, curr, 1 - CORNER_CUT_RATIO);
+    const exit = lerp(curr, next, CORNER_CUT_RATIO);
+    result.push(enter);
+    for (let s = 1; s < CORNER_SAMPLES; s++) {
+      result.push(quadraticBezier(enter, curr, exit, s / CORNER_SAMPLES));
+    }
+    result.push(exit);
+  }
+  result.push(points[points.length - 1]);
+  return result;
+}
+
 // Başlangıç ile bitiş arasında, verilen engellerin (stant/sahne/duvar)
 // etrafından dolanan bir rota bulur. Rota yoksa (örn. tamamen kapalı bir
 // alan) null döner. Dönen noktalar krokideki yüzde (0-100) koordinat
@@ -323,11 +389,11 @@ export function findRoute(
   start: RoutePoint,
   end: RoutePoint,
   obstacles: RouteObstacle[],
-  options?: { cols?: number; rows?: number },
+  options?: { cols?: number; rows?: number; clearance?: number },
 ): RoutePoint[] | null {
   const cols = options?.cols ?? DEFAULT_COLS;
   const rows = options?.rows ?? DEFAULT_ROWS;
-  const blocked = buildBlockedGrid(cols, rows, obstacles);
+  const clearance = options?.clearance ?? DEFAULT_ROUTE_CLEARANCE;
 
   const toCell = (point: RoutePoint) => ({
     x: clampInt(Math.floor((point.x / 100) * cols), 0, cols - 1),
@@ -335,18 +401,37 @@ export function findRoute(
   });
   const startCell = toCell(start);
   const endCell = toCell(end);
-  clearCellAndNeighbors(blocked, cols, rows, startCell.x, startCell.y);
-  clearCellAndNeighbors(blocked, cols, rows, endCell.x, endCell.y);
-
-  const gridPath = findGridPath(cols, rows, blocked, startCell, endCell);
-  if (!gridPath) return null;
-
   const cellW = 100 / cols;
   const cellH = 100 / rows;
-  const percentPath: RoutePoint[] = [
-    start,
-    ...gridPath.map((cell) => ({ x: (cell.x + 0.5) * cellW, y: (cell.y + 0.5) * cellH })),
-    end,
-  ];
-  return simplifyPath(percentPath, obstacles);
+
+  // Belirli bir engel listesiyle (orijinal ya da genişletilmiş/"inflated")
+  // tam bir rota denemesi yapar. Izgara bloklama VE görüş-hattı sadeleştirmesi
+  // AYNI engel listesini kullanmalı — yoksa sadeleştirme, ızgaranın kaçındığı
+  // bir engele fazla yakın bir kestirmeyi "güvenli" sanabilir.
+  function attempt(obstaclesForAttempt: RouteObstacle[]): RoutePoint[] | null {
+    const blocked = buildBlockedGrid(cols, rows, obstaclesForAttempt);
+    clearCellAndNeighbors(blocked, cols, rows, startCell.x, startCell.y);
+    clearCellAndNeighbors(blocked, cols, rows, endCell.x, endCell.y);
+
+    const gridPath = findGridPath(cols, rows, blocked, startCell, endCell);
+    if (!gridPath) return null;
+
+    const percentPath: RoutePoint[] = [
+      start,
+      ...gridPath.map((cell) => ({ x: (cell.x + 0.5) * cellW, y: (cell.y + 0.5) * cellH })),
+      end,
+    ];
+    return simplifyPath(percentPath, obstaclesForAttempt);
+  }
+
+  // Önce engellere ekstra pay ekleyerek dene (daha doğal, duvara/stanta
+  // yapışmayan bir rota) — eğer bu pay yüzünden dar bir geçit tamamen
+  // kapanıp rota bulunamazsa (örn. iki stant arasındaki tek geçit), payı
+  // hiç eklemeden orijinal engellerle tekrar dene. Böylece yumuşatma
+  // özelliği var olan bir rotayı asla "rota bulunamadı"ya çeviremez.
+  const inflated = clearance > 0 ? obstacles.map((o) => inflateObstacle(o, clearance)) : obstacles;
+  const simplified = attempt(inflated) ?? (clearance > 0 ? attempt(obstacles) : null);
+  if (!simplified) return null;
+
+  return roundCorners(simplified);
 }
