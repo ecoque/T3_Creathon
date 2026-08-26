@@ -36,7 +36,8 @@ import { useCurrentProfile } from '../../lib/useCurrentProfile';
 import { useIsAdmin } from '../../lib/useIsAdmin';
 import { useVenueMap } from '../../lib/useVenueMap';
 import { WATER_STATION_STATUS_LABEL_KEY, useReportWaterStationEmpty, useWaterStations } from '../../lib/useWaterStations';
-import { densityColor, gpsToMapPercent, heatBlobsFromGrid } from '../../lib/zoneDensity';
+import { projectGpsToMap, routeDistanceMeters, useVenueTransform } from '../../lib/venueCalibration';
+import { densityColor, heatBlobsFromGrid } from '../../lib/zoneDensity';
 
 // Stant ve sahnelerin krokideki yaklaşık "ayak izi" — rota hesaplanırken bu
 // yarıçap kadar alan etraflarından dolanılıyor (bkz. lib/routePlanner.ts).
@@ -46,6 +47,15 @@ const STAGE_OBSTACLE_RADIUS = 6;
 // Rota başlangıcı için gerçek bir stant/sahne key'i değil, kullanıcının o
 // anki GPS konumunu temsil eden özel bir anahtar — bkz. handleUseCurrentLocation.
 const CURRENT_LOCATION_KEY = 'current-location';
+
+// Rota mesafesinden tahmini varış süresi hesaplarken kullanılan ortalama
+// yürüme hızı (m/s) — "Haritada Gör" ile otomatik kurulan rotanın (bkz.
+// autoRouteToLocation) ve elle kurulan rotaların (bkz. routeStats) süre
+// tahmini için. Açık alanda düz yürüyüş ortalaması (~1.4 m/s) yerine
+// BİLİNÇLİ OLARAK biraz daha muhafazakâr bir değer seçildi — kalabalık bir
+// etkinlik alanında durup bakınma, başkalarıyla karşılaşma gibi doğal
+// yavaşlamalar hesaba katılıyor.
+const AVERAGE_WALKING_SPEED_MPS = 1.2;
 
 type LocationEntry = {
   key: string;
@@ -205,6 +215,12 @@ export default function MapScreen() {
   const params = useLocalSearchParams<{ locationName?: string }>();
   const { data: meResult } = useCurrentProfile();
   const { data, isLoading } = useVenueMap();
+  // Üç noktalı afin kalibrasyon (bkz. lib/venueCalibration.ts) — admin en az
+  // 2 ek kalibrasyon noktası onayladıysa GPS'i krokiye yerleştirirken artık
+  // eski tek-merkezli/kare-varsayımlı yöntem yerine bu kullanılıyor; hiç
+  // kalibrasyon noktası yoksa `transform` null döner ve `projectGpsToMap`
+  // (aşağıdaki iki kullanım yerinde) otomatik olarak eski yönteme düşer.
+  const { transform: venueTransform } = useVenueTransform(data?.venueCenterLat ?? null, data?.venueCenterLng ?? null);
   const { data: waterStations = [] } = useWaterStations();
   // Yoğunluk ısı haritası — admin bir "Harita Merkezi" ayarladıysa (bkz.
   // data.venueCenterLat), krokide kırmızı(yoğun)-yeşil(az yoğun) bir katman
@@ -242,6 +258,13 @@ export default function MapScreen() {
   // zaman göstermek — rota hesaplamasına dahil değil, hiçbir yere kaydedilmiyor.
   const [myLocationPoint, setMyLocationPoint] = useState<RoutePoint | null>(null);
   const myLocationWatcherRef = useRef<Location.LocationSubscription | null>(null);
+  // "Haritada Gör" ile gelindiğinde (bkz. aşağıdaki locationName effect'i)
+  // otomatik rota kurma denemesinin, AYNI navigasyon için sadece BİR KEZ
+  // yapılmasını sağlıyor — yoksa arka planda periyodik yenilenen harita
+  // verisi (bkz. useVenueMap'in staleTime'ı) her seferinde yeniden GPS izni
+  // isteyip kullanıcının o sırada elle kurduğu farklı bir rotanın üzerine
+  // yazardı. Değer, en son otomatik rota denenen `locationName` param'ı.
+  const autoRoutedForRef = useRef<string | null>(null);
 
   const locations = useMemo<LocationEntry[]>(() => {
     if (!data) return [];
@@ -275,7 +298,15 @@ export default function MapScreen() {
     : undefined;
 
   // Bir oturumun konumuna ("location" metnine) en yakın gerçek sahneyi
-  // bulup otomatik seçiyor — bkz. app/(tabs)/home.tsx > goToMap.
+  // bulup otomatik seçiyor — bkz. app/(tabs)/home.tsx > goToMap VE
+  // features/visitor/VisitorEventsScreen.tsx > showOnMap (SessionDetailModal
+  // > "Haritada Gör"). Aynı zamanda bu sahneyi otomatik rota varış noktası
+  // yapıp kullanıcının o anki GPS konumundan oraya bir rota kurmayı
+  // DENİYOR (bkz. autoRouteToLocation) — kullanıcı ayrıca "Rota Bul"
+  // panelini elle doldurmak zorunda kalmasın diye. Harita merkezi
+  // ayarlanmamışsa (GPS'i krokiye çevirecek bir referans yok) otomatik rota
+  // denemesi SESSİZCE atlanıyor, sadece pin seçimi yapılıyor — "Rota Bul"
+  // paneli hâlâ elle kullanılabiliyor.
   useEffect(() => {
     if (!params.locationName || !data) return;
     const needle = params.locationName.toLocaleLowerCase('tr');
@@ -284,8 +315,23 @@ export default function MapScreen() {
         item.name.toLocaleLowerCase('tr').includes(needle) ||
         needle.includes(item.name.toLocaleLowerCase('tr')),
     );
-    if (stage) setSelectedKey(`stage:${stage.id}`);
-  }, [params.locationName, data]);
+    if (!stage) return;
+    const key = `stage:${stage.id}`;
+    setSelectedKey(key);
+
+    if (
+      autoRoutedForRef.current !== params.locationName &&
+      data.venueCenterLat != null &&
+      data.venueCenterLng != null
+    ) {
+      const endEntry = locationByKey.get(key);
+      if (endEntry) {
+        autoRoutedForRef.current = params.locationName;
+        setRouteEndKey(key);
+        void autoRouteToLocation(endEntry);
+      }
+    }
+  }, [params.locationName, data, locationByKey]);
 
   // Krokide "Şu anda buradasınız" kırmızı noktasını canlı tutan izleyici.
   // Harita merkezi ayarlanmamışsa (data.venueCenterLat == null) GPS'i krokideki
@@ -294,7 +340,10 @@ export default function MapScreen() {
   // handleUseCurrentLocation'daki gibi bir hata banner'ı GÖSTERİLMİYOR —
   // bu, kullanıcının kendi isteğiyle tetiklediği bir aksiyon değil, ekran
   // her açıldığında otomatik denenen pasif bir gösterge olduğu için ısrarcı
-  // bir hata mesajı rahatsız edici olurdu).
+  // bir hata mesajı rahatsız edici olurdu). `venueTransform` bağımlılıklarda
+  // — admin kalibrasyon noktalarını değiştirirse (nadir ama mümkün, örn. bu
+  // ekran açıkken) abonelik yeniden kurulup GPS dönüşümü güncel dönüşümü
+  // kullanmaya devam etsin diye.
   useEffect(() => {
     let cancelled = false;
 
@@ -306,12 +355,11 @@ export default function MapScreen() {
       const subscription = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.Balanced, timeInterval: 4000, distanceInterval: 3 },
         (loc) => {
-          const point = gpsToMapPercent(
+          const point = projectGpsToMap(
             loc.coords.latitude,
             loc.coords.longitude,
-            data.venueCenterLat as number,
-            data.venueCenterLng as number,
-            data.venueRadiusMeters || 150,
+            { centerLat: data.venueCenterLat, centerLng: data.venueCenterLng, radiusMeters: data.venueRadiusMeters || 150 },
+            venueTransform,
           );
           if (point) setMyLocationPoint(point);
         },
@@ -331,7 +379,7 @@ export default function MapScreen() {
       myLocationWatcherRef.current = null;
       setMyLocationPoint(null);
     };
-  }, [data?.venueCenterLat, data?.venueCenterLng, data?.venueRadiusMeters]);
+  }, [data?.venueCenterLat, data?.venueCenterLng, data?.venueRadiusMeters, venueTransform]);
 
   function toggleLayer(key: 'booths' | 'stages' | 'water' | 'density') {
     setLayers((current) => ({ ...current, [key]: !current[key] }));
@@ -349,8 +397,10 @@ export default function MapScreen() {
   }
 
   // "Şu anki Konumumu Kullan" — cihazın GPS'ini bir kereliğine okuyup
-  // admin'in ayarladığı TEK harita merkezine göre krokideki yüzde konumuna
-  // çeviriyor (bkz. lib/zoneDensity.ts > gpsToMapPercent). Isı haritasındaki
+  // krokideki yüzde konumuna çeviriyor. En az 2 kalibrasyon noktası
+  // onaylanmışsa (bkz. lib/venueCalibration.ts) ölçülmüş afin dönüşüm
+  // kullanılıyor, yoksa `projectGpsToMap` eski tek-merkezli yönteme
+  // (lib/zoneDensity.ts > gpsToMapPercent) geri düşüyor. Isı haritasındaki
   // sürekli arka plan takibinden (lib/locationTracking.ts) FARKLI ve
   // bağımsız bir akış — burada sadece TEK seferlik, anlık bir konum lazım.
   async function handleUseCurrentLocation() {
@@ -366,12 +416,11 @@ export default function MapScreen() {
         return;
       }
       const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const point = gpsToMapPercent(
+      const point = projectGpsToMap(
         position.coords.latitude,
         position.coords.longitude,
-        data.venueCenterLat,
-        data.venueCenterLng,
-        data.venueRadiusMeters || 150,
+        { centerLat: data.venueCenterLat, centerLng: data.venueCenterLng, radiusMeters: data.venueRadiusMeters || 150 },
+        venueTransform,
       );
       if (!point) {
         setRouteError(t('map.routeLocationError'));
@@ -386,6 +435,41 @@ export default function MapScreen() {
     } finally {
       setLocatingCurrent(false);
     }
+  }
+
+  // `buildRoute` (elle "Rota Oluştur" düğmesi) ve `autoRouteToLocation`
+  // (bkz. yukarıdaki locationName effect'i) arasında paylaşılan ortak
+  // çekirdek — engel listesini kurup A*'yı çağırıyor. İki çağıran taraf da
+  // farklı `excludeKeys` veriyor (biri state'teki routeStartKey/EndKey'i,
+  // diğeri sabit CURRENT_LOCATION_KEY + hedef anahtarını) ki başlangıç/bitiş
+  // noktasının kendisi yanlışlıkla kendi engeli sayılmasın.
+  function computeRoutePath(
+    startPoint: RoutePoint,
+    endEntry: LocationEntry,
+    excludeKeys: (string | null)[],
+  ): RoutePoint[] | null {
+    const boothStageObstacles: RouteObstacle[] = locations
+      .filter((item) => !excludeKeys.includes(item.key))
+      .map((item) => ({
+        kind: 'circle',
+        id: item.key,
+        x: item.x,
+        y: item.y,
+        radius: item.type === 'stage' ? STAGE_OBSTACLE_RADIUS : BOOTH_OBSTACLE_RADIUS,
+      }));
+    // Admin'in krokiye elle çizdiği duvarlar — her kroki fotoğrafı farklı
+    // olduğu için otomatik tespit edilmiyor, admin'in kendi işaretlediği
+    // çizgiler kullanılıyor (bkz. AdminMapManagement.tsx > duvar çizme modu).
+    const wallObstacles: RouteObstacle[] = (data?.floorPlanWalls || []).map((wall) => ({
+      kind: 'wall',
+      id: wall.id,
+      x1: wall.x1,
+      y1: wall.y1,
+      x2: wall.x2,
+      y2: wall.y2,
+      thickness: DEFAULT_WALL_THICKNESS,
+    }));
+    return findRoute(startPoint, { x: endEntry.x, y: endEntry.y }, [...boothStageObstacles, ...wallObstacles]);
   }
 
   function buildRoute() {
@@ -406,28 +490,7 @@ export default function MapScreen() {
       setRouteError(t('map.routeSameError'));
       return;
     }
-    const boothStageObstacles: RouteObstacle[] = locations
-      .filter((item) => item.key !== routeStartKey && item.key !== routeEndKey)
-      .map((item) => ({
-        kind: 'circle',
-        id: item.key,
-        x: item.x,
-        y: item.y,
-        radius: item.type === 'stage' ? STAGE_OBSTACLE_RADIUS : BOOTH_OBSTACLE_RADIUS,
-      }));
-    // Admin'in krokiye elle çizdiği duvarlar — her kroki fotoğrafı farklı
-    // olduğu için otomatik tespit edilmiyor, admin'in kendi işaretlediği
-    // çizgiler kullanılıyor (bkz. AdminMapManagement.tsx > duvar çizme modu).
-    const wallObstacles: RouteObstacle[] = (data?.floorPlanWalls || []).map((wall) => ({
-      kind: 'wall',
-      id: wall.id,
-      x1: wall.x1,
-      y1: wall.y1,
-      x2: wall.x2,
-      y2: wall.y2,
-      thickness: DEFAULT_WALL_THICKNESS,
-    }));
-    const path = findRoute(startPoint, { x: endEntry.x, y: endEntry.y }, [...boothStageObstacles, ...wallObstacles]);
+    const path = computeRoutePath(startPoint, endEntry, [routeStartKey, routeEndKey]);
     if (!path) {
       setRoutePoints(null);
       setRouteError(t('map.routeNotFound'));
@@ -437,6 +500,42 @@ export default function MapScreen() {
     setRouteError(null);
   }
 
+  // "Haritada Gör" ile gelindiğinde otomatik tetiklenen rota kurma akışı —
+  // `handleUseCurrentLocation` ("Şu anki Konumumu Kullan" düğmesi) ile
+  // BİREBİR aynı GPS okuma mantığını kullanıyor; tek farkı, kullanıcının
+  // kendi bastığı bir aksiyon olmadığı için izin reddi/konum hatalarını
+  // SESSİZCE yutması — ısrarcı bir hata banner'ı burada rahatsız edici
+  // olurdu ("şu anda buradasınız" göstergesindeki aynı bilinçli tercih,
+  // bkz. yukarısı). Başarısız olursa kullanıcı "Rota Bul" panelinden elle
+  // dener.
+  async function autoRouteToLocation(endEntry: LocationEntry) {
+    if (data?.venueCenterLat == null || data?.venueCenterLng == null) return;
+    setLocatingCurrent(true);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') return;
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const point = projectGpsToMap(
+        position.coords.latitude,
+        position.coords.longitude,
+        { centerLat: data.venueCenterLat, centerLng: data.venueCenterLng, radiusMeters: data.venueRadiusMeters || 150 },
+        venueTransform,
+      );
+      if (!point) return;
+      setCurrentLocationPoint(point);
+      setRouteStartKey(CURRENT_LOCATION_KEY);
+      const path = computeRoutePath(point, endEntry, [CURRENT_LOCATION_KEY, endEntry.key]);
+      if (path) {
+        setRoutePoints(path);
+        setRouteError(null);
+      }
+    } catch {
+      // Sessizce vazgeç — kullanıcı isterse "Rota Bul" panelinden elle dener.
+    } finally {
+      setLocatingCurrent(false);
+    }
+  }
+
   function clearRoute() {
     setRoutePoints(null);
     setRouteError(null);
@@ -444,6 +543,26 @@ export default function MapScreen() {
     setRouteEndKey(null);
     setCurrentLocationPoint(null);
   }
+
+  // Kurulu bir rotanın mesafe + ortalama yürüme hızına göre tahmini varış
+  // süresi (bkz. AVERAGE_WALKING_SPEED_MPS) — hem elle "Rota Oluştur" hem
+  // de "Haritada Gör" ile otomatik kurulan rotalar için aynı şekilde
+  // hesaplanıyor. Harita merkezi ayarlanmamışsa (gerçek dünya ölçeğine dair
+  // hiçbir referans yoksa) `null` dönüyor — bu durumda rota hâlâ krokide
+  // çiziliyor, sadece mesafe/süre satırı gösterilmiyor.
+  const routeStats = useMemo(() => {
+    if (!routePoints || routePoints.length < 2) return null;
+    if (data?.venueCenterLat == null || data?.venueCenterLng == null) return null;
+    const meters = routeDistanceMeters(routePoints, data.venueRadiusMeters || 150, venueTransform);
+    if (meters == null) return null;
+    const distanceLabel =
+      meters >= 1000
+        ? t('map.routeDistanceKm', { value: (meters / 1000).toFixed(2) })
+        : t('map.routeDistanceMeters', { value: Math.max(1, Math.round(meters)) });
+    const minutes = Math.max(1, Math.ceil(meters / AVERAGE_WALKING_SPEED_MPS / 60));
+    const etaLabel = t('map.routeEtaMinutes', { value: minutes });
+    return { distanceLabel, etaLabel };
+  }, [routePoints, data?.venueCenterLat, data?.venueCenterLng, data?.venueRadiusMeters, venueTransform, t]);
 
   return (
     <View style={styles.screen}>
@@ -853,7 +972,13 @@ export default function MapScreen() {
           </Pressable>
 
           {routeError ? <Text style={styles.routeErrorText}>{routeError}</Text> : null}
-          {!routeError && routePoints ? <Text style={styles.routeSuccessText}>{t('map.routeFound')}</Text> : null}
+          {!routeError && routePoints ? (
+            <Text style={styles.routeSuccessText}>
+              {routeStats
+                ? t('map.routeStatsSummary', { distance: routeStats.distanceLabel, eta: routeStats.etaLabel })
+                : t('map.routeFound')}
+            </Text>
+          ) : null}
 
           <View style={styles.routeButtonsRow}>
             <Pressable style={styles.routeBuildBtn} onPress={buildRoute}>

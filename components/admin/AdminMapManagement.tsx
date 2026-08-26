@@ -6,11 +6,13 @@ import {
   Droplet,
   Edit3,
   Layers3,
+  LocateFixed,
   Maximize2,
   Move,
   PenLine,
   Plus,
   Radio,
+  RefreshCw,
   Share2,
   Store,
   Target,
@@ -59,6 +61,13 @@ import {
 import { buildKrokiHtml } from '../../lib/krokiExport';
 import { useLiveDensityGrid } from '../../lib/useLiveDensity';
 import { useCreateWaterStation, useUpdateWaterStationPosition, useWaterStations } from '../../lib/useWaterStations';
+import {
+  useAddCalibrationPoint,
+  useCalibrationCandidates,
+  useCalibrationPoints,
+  useDeleteCalibrationPoint,
+  type CalibrationCandidate,
+} from '../../lib/venueCalibration';
 import { densityColor, distanceFromVenueCenterMeters, heatBlobsFromGrid } from '../../lib/zoneDensity';
 import type { AdminBooth, AdminStage, EventSettings, FloorPlanWall, ZoneDensityInfo } from '../../types/admin';
 
@@ -599,6 +608,261 @@ function VenueCenterModal({
   );
 }
 
+// 3 noktalı afin kalibrasyon yönetimi (bkz. lib/venueCalibration.ts +
+// supabase_venue_calibration_migration.sql için gerekçe). Merkez noktası
+// (VenueCenterModal) zaten bir referans; burada eklenen EN AZ 2 nokta daha
+// ile GPS<->kroki dönüşümü tek-merkezli/kare varsayımından tam bir afin
+// dönüşüme yükseliyor. İki kaynak var: admin elle zaten yerleştirilmiş bir
+// stant/sahneye gidip GPS'ini kaydediyor (yeni bir "krokiye dokun" arayüzü
+// GEREKMİYOR — mevcut booth/stage konumu zaten biliniyor), ya da katılımcı
+// check-in'lerinden otomatik türetilen adaylar tek tuşla onaylanıyor.
+function CalibrationPointsModal({
+  visible,
+  booths,
+  stages,
+  onClose,
+  onNotify,
+}: {
+  visible: boolean;
+  booths: AdminBooth[];
+  stages: AdminStage[];
+  onClose: () => void;
+  onNotify?: (message: string) => void;
+}) {
+  const { data: points = [] } = useCalibrationPoints();
+  const { data: candidates = [], isFetching: candidatesLoading, refetch: refetchCandidates } = useCalibrationCandidates();
+  const addPoint = useAddCalibrationPoint();
+  const deletePoint = useDeleteCalibrationPoint();
+  // Hem "elle ekle" chip'lerinde hem "aday ekle" butonlarında aynı anda tek
+  // bir işlem sürsün diye tek bir anahtar (booth-<id> / stage-<id> /
+  // stand-<id> / session-<id>) kullanılıyor.
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (visible) {
+      setError(null);
+      void refetchCandidates();
+    }
+  }, [visible]);
+
+  const placedBooths = useMemo(() => booths.filter((booth) => isBoothPlaced(booth)), [booths]);
+  const placedStages = useMemo(() => stages.filter((stage) => isStagePlaced(stage)), [stages]);
+
+  // Aday zaten onaylanmışsa (etiketi onaylı bir noktayla eşleşiyorsa) tekrar
+  // listelenmesin — kalibrasyon tablosu hedefin kendi id'sini tutmuyor
+  // (bkz. migration), bu yüzden basitçe etikete göre eşleştiriliyor.
+  const confirmedLabels = useMemo(() => new Set(points.map((point) => point.label).filter(Boolean)), [points]);
+  const openCandidates = candidates.filter((candidate) => !confirmedLabels.has(candidate.label));
+
+  async function handleManualCapture(kind: 'booth' | 'stage', item: AdminBooth | AdminStage) {
+    const key = `${kind}-${item.id}`;
+    setBusyKey(key);
+    setError(null);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        setError('Konum izni verilmeden bu noktanın konumu alınamaz.');
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      await addPoint.mutateAsync({
+        mapX: item.mapX,
+        mapY: item.mapY,
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        source: 'manual',
+        label: kind === 'booth' ? (item as AdminBooth).companyName : (item as AdminStage).name,
+        accuracyM: position.coords.accuracy ?? null,
+      });
+      onNotify?.('Kalibrasyon noktası eklendi.');
+    } catch (captureError) {
+      setError(captureError instanceof Error ? captureError.message : 'Konum alınamadı.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function handleAcceptCandidate(candidate: CalibrationCandidate) {
+    const key = `${candidate.targetType}-${candidate.targetId}`;
+    setBusyKey(key);
+    setError(null);
+    try {
+      await addPoint.mutateAsync({
+        mapX: candidate.mapX,
+        mapY: candidate.mapY,
+        lat: candidate.lat,
+        lng: candidate.lng,
+        source: 'checkin_derived',
+        label: candidate.label,
+        accuracyM: candidate.accuracyM,
+        sampleCount: candidate.sampleCount,
+      });
+      onNotify?.('Kalibrasyon noktası eklendi.');
+    } catch (acceptError) {
+      setError(acceptError instanceof Error ? acceptError.message : 'Eklenemedi.');
+    } finally {
+      setBusyKey(null);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setError(null);
+    try {
+      await deletePoint.mutateAsync(id);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : 'Silinemedi.');
+    }
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={modalStyles.overlay}>
+        <View style={modalStyles.card}>
+          <View style={modalStyles.header}>
+            <Text style={modalStyles.title}>Kalibrasyon Noktaları</Text>
+            <Pressable onPress={onClose} hitSlop={8}>
+              <X size={20} color={colors.textMuted} />
+            </Pressable>
+          </View>
+
+          <ScrollView contentContainerStyle={modalStyles.form}>
+            {error ? <Text style={modalStyles.errorText}>{error}</Text> : null}
+
+            <View style={[calibStyles.statusBox, points.length >= 2 && calibStyles.statusBoxActive]}>
+              <Text style={calibStyles.statusText}>
+                {points.length >= 2
+                  ? `Afin dönüşüm aktif (${points.length} nokta) — konumlar artık gerçek ölçek ve dönüklükle hesaplanıyor.`
+                  : `${points.length}/2 nokta — afin dönüşüm için merkeze ek 2 nokta daha gerekiyor. Yeterli nokta girilene kadar eski (tek merkezli) yöntem kullanılmaya devam eder.`}
+              </Text>
+            </View>
+
+            <Text style={modalStyles.hint}>
+              Harita Merkezi zaten bir referans noktası. Buraya, krokideki yeri bilinen (bir stant ya
+              da sahne) 2 nokta daha eklersen, harita artık gerçek ölçek ve dönüklüğe göre hesaplanır
+              — bina kare olmasa ya da kroki tam kuzeye hizalı çizilmemiş olsa bile.
+            </Text>
+
+            {points.length > 0 ? (
+              <View style={{ gap: 8 }}>
+                <Text style={calibStyles.sectionTitle}>Onaylı Noktalar</Text>
+                {points.map((point) => (
+                  <View key={point.id} style={calibStyles.row}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={calibStyles.rowLabel}>{point.label || 'İsimsiz nokta'}</Text>
+                      <Text style={calibStyles.rowSub}>
+                        {point.source === 'manual' ? 'Elle eklendi' : `Check-in'den (${point.sampleCount} örnek)`}
+                      </Text>
+                    </View>
+                    <Pressable
+                      style={calibStyles.iconBtn}
+                      onPress={() => handleDelete(point.id)}
+                      disabled={deletePoint.isPending}
+                    >
+                      <Trash2 size={15} color={colors.danger} />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            <View style={{ gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Text style={calibStyles.sectionTitle}>Otomatik Adaylar (Check-in'lerden)</Text>
+                <Pressable style={calibStyles.iconBtn} onPress={() => refetchCandidates()} disabled={candidatesLoading}>
+                  {candidatesLoading ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <RefreshCw size={15} color={colors.primary} />
+                  )}
+                </Pressable>
+              </View>
+              {openCandidates.length === 0 ? (
+                <Text style={modalStyles.hint}>
+                  Şu an için yeterli check-in verisi yok — katılımcılar stant/oturum check-in yaptıkça
+                  burada adaylar belirecek.
+                </Text>
+              ) : (
+                openCandidates.map((candidate) => {
+                  const key = `${candidate.targetType}-${candidate.targetId}`;
+                  return (
+                    <View key={key} style={calibStyles.row}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={calibStyles.rowLabel}>{candidate.label}</Text>
+                        <Text style={calibStyles.rowSub}>{candidate.sampleCount} check-in ortalaması</Text>
+                      </View>
+                      <Pressable
+                        style={calibStyles.acceptBtn}
+                        onPress={() => handleAcceptCandidate(candidate)}
+                        disabled={busyKey === key}
+                      >
+                        {busyKey === key ? (
+                          <ActivityIndicator size="small" color={colors.white} />
+                        ) : (
+                          <Text style={calibStyles.acceptBtnText}>Ekle</Text>
+                        )}
+                      </Pressable>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+
+            <View style={{ gap: 8 }}>
+              <Text style={calibStyles.sectionTitle}>Elle Ekle</Text>
+              <Text style={modalStyles.hint}>
+                Aşağıdan zaten krokiye yerleştirilmiş bir stant/sahne seç, fiziksel olarak o noktaya
+                git ve GPS'ini kaydet.
+              </Text>
+              <View style={calibStyles.chipWrap}>
+                {placedBooths.map((booth) => {
+                  const key = `booth-${booth.id}`;
+                  return (
+                    <Pressable
+                      key={key}
+                      style={calibStyles.chip}
+                      onPress={() => handleManualCapture('booth', booth)}
+                      disabled={busyKey === key}
+                    >
+                      {busyKey === key ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <LocateFixed size={12} color={colors.primary} />
+                      )}
+                      <Text style={calibStyles.chipText}>{booth.companyName}</Text>
+                    </Pressable>
+                  );
+                })}
+                {placedStages.map((stage) => {
+                  const key = `stage-${stage.id}`;
+                  return (
+                    <Pressable
+                      key={key}
+                      style={calibStyles.chip}
+                      onPress={() => handleManualCapture('stage', stage)}
+                      disabled={busyKey === key}
+                    >
+                      {busyKey === key ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <LocateFixed size={12} color={colors.primary} />
+                      )}
+                      <Text style={calibStyles.chipText}>{stage.name}</Text>
+                    </Pressable>
+                  );
+                })}
+                {placedBooths.length === 0 && placedStages.length === 0 ? (
+                  <Text style={modalStyles.hint}>Önce krokiye en az bir stant/sahne yerleştir.</Text>
+                ) : null}
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export function AdminMapManagement({
   stages,
   booths,
@@ -636,6 +900,7 @@ export function AdminMapManagement({
   const { data: densityCells = [] } = useLiveDensityGrid();
   const heatBlobs = useMemo(() => heatBlobsFromGrid(densityCells), [densityCells]);
   const [venueCenterModalVisible, setVenueCenterModalVisible] = useState(false);
+  const [calibrationModalVisible, setCalibrationModalVisible] = useState(false);
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
     booths: true,
     stages: true,
@@ -1535,6 +1800,12 @@ export function AdminMapManagement({
                 {settings.venueCenterLat != null ? 'Harita Merkezi Ayarlı' : 'Harita Merkezini Ayarla'}
               </Text>
             </Pressable>
+            {settings.venueCenterLat != null ? (
+              <Pressable style={styles.uploadBtn} onPress={() => setCalibrationModalVisible(true)}>
+                <LocateFixed size={14} color={colors.primary} />
+                <Text style={styles.uploadBtnText}>Kalibrasyon Noktaları</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               style={[styles.uploadBtn, pendingPositionCount === 0 && styles.uploadBtnDisabled]}
               onPress={() => void saveAllPositions()}
@@ -1844,6 +2115,14 @@ export function AdminMapManagement({
         visible={venueCenterModalVisible}
         settings={settings}
         onClose={() => setVenueCenterModalVisible(false)}
+        onNotify={onNotify}
+      />
+
+      <CalibrationPointsModal
+        visible={calibrationModalVisible}
+        booths={booths}
+        stages={stages}
+        onClose={() => setCalibrationModalVisible(false)}
         onNotify={onNotify}
       />
 
@@ -2590,4 +2869,66 @@ const modalStyles = StyleSheet.create({
     backgroundColor: colors.primary,
   },
   saveBtnText: { color: colors.white, fontSize: 13, fontWeight: '800' },
+});
+
+// CalibrationPointsModal'a özel stiller — genel modal iskeletini (overlay,
+// card, header, form, hint, errorText) hâlâ yukarıdaki modalStyles'tan
+// kullanıyor, sadece bu modala özgü liste/rozet/chip görünümleri burada.
+const calibStyles = StyleSheet.create({
+  statusBox: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.background,
+    padding: 12,
+  },
+  statusBoxActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+  },
+  statusText: { fontSize: 12, color: colors.text, lineHeight: 17, fontWeight: '600' },
+  sectionTitle: { fontSize: 12, fontWeight: '800', color: colors.text },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 10,
+  },
+  rowLabel: { fontSize: 13, fontWeight: '700', color: colors.text },
+  rowSub: { fontSize: 11, color: colors.textFaint, marginTop: 2 },
+  iconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  acceptBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: colors.primary,
+    minWidth: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  acceptBtnText: { color: colors.white, fontSize: 12, fontWeight: '800' },
+  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+  },
+  chipText: { color: colors.primary, fontSize: 12, fontWeight: '700' },
 });
